@@ -41,6 +41,7 @@ function read({ bin, env, timeout = 15000 }) {
     child.on('error', (e) => finish({ ok: false, error: e.code === 'ENOENT' ? 'codex not found' : e.message }));
     child.on('exit', () => finish({ ok: false, error: stderr.trim().split('\n').pop() || 'codex app-server exited' }));
     child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
+    child.stdin.on('error', () => {}); // app-server мог уже закрыться
     child.stdout.on('data', (d) => {
       buf += d.toString('utf8');
       let i;

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.11
+
+- OpenCode: older versions that don't know `--variant` (or other new flags) are now retried without the flag instead of handing the task to another agent.
+- A dropped network connection (proxy, CLI, SSH bridge) no longer shows the "JavaScript error in the main process" window; such errors go to `errors.log` in the app data folder.
+
 ## 0.1.10
 
 - **OpenCode** as a fourth code agent: any provider in `provider/model` form, free OpenCode Zen models out of the box, reasoning, tool steps, subagents, session resume, token usage.

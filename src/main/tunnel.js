@@ -73,7 +73,7 @@ function portOpen(port) {
   return new Promise((resolve) => {
     const s = net.connect({ host: '127.0.0.1', port });
     s.once('connect', () => { s.destroy(); resolve(true); });
-    s.once('error', () => resolve(false));
+    s.on('error', () => resolve(false));
     s.setTimeout(400, () => { s.destroy(); resolve(false); });
   });
 }

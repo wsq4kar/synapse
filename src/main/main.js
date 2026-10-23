@@ -17,6 +17,19 @@ const i18n = require('./i18n');
 const { t } = i18n;
 
 if (process.env.SYNAPSE_USER_DATA) app.setPath('userData', process.env.SYNAPSE_USER_DATA);
+
+// Обрыв сетевого соединения (прокси, CLI, сервер) — не повод показывать окно «JavaScript error».
+// Такие ошибки пишем в журнал; всё остальное показываем как раньше.
+const NET_CODES = new Set(['ECONNRESET', 'EPIPE', 'ECONNABORTED', 'ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN', 'ERR_STREAM_DESTROYED']);
+function errLog(e) {
+  try { fs.appendFileSync(path.join(app.getPath('userData'), 'errors.log'), `${new Date().toISOString()} ${e?.stack || e}\n`); } catch { /* */ }
+}
+process.on('uncaughtException', (e) => {
+  errLog(e);
+  if (NET_CODES.has(e?.code)) return;
+  try { dialog.showErrorBox('Synapse', String(e?.stack || e)); } catch { /* */ }
+});
+process.on('unhandledRejection', (e) => { errLog(e); });
 if (!app.requestSingleInstanceLock()) app.quit();
 
 protocol.registerSchemesAsPrivileged([

@@ -30,9 +30,10 @@ function proxyAlive() {
   if (Date.now() - alive.at < 3000) return Promise.resolve(alive.ok);
   return new Promise((resolve) => {
     const s = net.connect({ host: hp.host, port: hp.port });
-    const done = (ok) => { s.destroy(); alive = { at: Date.now(), ok }; resolve(ok); };
+    let fin = false;
+    const done = (ok) => { if (fin) return; fin = true; s.destroy(); alive = { at: Date.now(), ok }; resolve(ok); };
+    s.on('error', () => done(false)); // on, не once: повторная ошибка не должна уронить приложение
     s.once('connect', () => done(true));
-    s.once('error', () => done(false));
     s.setTimeout(1500, () => done(false));
   });
 }
@@ -119,6 +120,7 @@ function socksConnect(host, port) {
         if (buf.length < need) return;
         s.removeListener('data', onData);
         s.removeListener('error', fail);
+        s.on('error', () => {}); // до того как мост навесит свой обработчик
         s.setTimeout(0);
         resolve({ socket: s, rest: buf.subarray(need) });
       }
@@ -131,6 +133,7 @@ function bridgeUrl() {
   return new Promise((resolve, reject) => {
     const srv = http.createServer((req, res) => { res.writeHead(501); res.end('only CONNECT'); });
     srv.on('connect', async (req, client, head) => {
+      client.on('error', () => {}); // CLI может оборвать соединение раньше, чем откроется туннель
       const m = /^\[?([^\]]+?)\]?:(\d+)$/.exec(req.url || '');
       if (!m) return client.end('HTTP/1.1 400 Bad Request\r\n\r\n');
       try {
@@ -146,7 +149,8 @@ function bridgeUrl() {
       }
     });
     srv.once('error', reject);
-    srv.listen(0, '127.0.0.1', () => { bridge = srv; resolve(`http://127.0.0.1:${srv.address().port}`); });
+    srv.on('clientError', (_e, sock) => { try { sock.destroy(); } catch { /* */ } });
+    srv.listen(0, '127.0.0.1', () => { bridge = srv; srv.on('error', () => {}); resolve(`http://127.0.0.1:${srv.address().port}`); });
   });
 }
 

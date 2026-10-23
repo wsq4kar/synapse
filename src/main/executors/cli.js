@@ -181,7 +181,7 @@ function cleanEnv() {
 async function run(opts, drop = []) {
   const r = await runOnce(opts, drop);
   if (r.ok || r.aborted || drop.length >= 3) return r;
-  const m = /unexpected argument '(-{1,2}[\w-]+)'|unknown (?:option|flag)[:\s'"]+(-{1,2}[\w-]+)|unrecognized (?:option|argument)[:\s'"]+(-{1,2}[\w-]+)/i.exec(r.error || '');
+  const m = /unexpected argument '(-{1,2}[\w-]+)'|unknown (?:option|flag|argument)s?[:\s'"]+(-{1,2}[\w-]+)|unrecogni[sz]ed (?:option|argument|flag)s?[:\s'"]+(-{1,2}[\w-]+)/i.exec((r.error || '') + '\n' + (r.stderr || ''));
   const flag = m && (m[1] || m[2] || m[3]);
   if (!flag || drop.includes(flag) || ['-', '--', '--json', '--output-last-message'].includes(flag)) return r;
   opts.onEvent?.({ kind: 'step', id: `drop-${flag}`, status: 'done', title: t('Совместимость'), tool: 'other', detail: t('{f} не поддерживается этой версией — запускаю без него', { f: flag }) });
@@ -261,7 +261,7 @@ function runOnce({ id, bin, prompt, cwd, access, sessionId, ultra, model, effort
       const aborted = signal?.aborted;
       const ok = !aborted && !state.netKilled && !state.isError && !!text && (code === 0 || !!state.turnDone);
       resolve({
-        ok, text, sessionId: state.sessionId, cost: state.cost, code, aborted, usage: state.usage || null,
+        ok, text, sessionId: state.sessionId, cost: state.cost, code, aborted, usage: state.usage || null, stderr: err.slice(-2000),
         context: state.ctxUsed ? { used: state.ctxUsed, window: state.ctxWindow || null, compactAt: state.compactAt || null } : null,
         notInstalled, limited,
         netFail: !!state.netKilled,
