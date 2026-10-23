@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: media: wsfile: https://www.google.com https://*.gstatic.com; media-src 'self' media: wsfile: blob:; frame-src wsfile:; connect-src 'self'">
+  <title>Synapse</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app" id="app">
+    <!-- ============ Сайдбар ============ -->
+    <aside class="sidebar" id="sidebar">
+      <div class="side-top drag">
+        <button class="icon-btn sm" id="collapseBtn" title="Скрыть панель (Ctrl+B)" data-icon="panel"></button>
+        <button class="icon-btn sm" id="backBtn" title="Назад (Alt+←)" data-icon="arrowLeft"></button>
+        <button class="icon-btn sm" id="fwdBtn" title="Вперёд (Alt+→)" data-icon="arrowRight"></button>
+        <div class="tabs" id="tabs" role="tablist">
+          <span class="tabs-thumb"></span>
+          <button data-tab="chat" class="on" title="Чаты (Ctrl+1)" data-icon="message"></button>
+          <button data-tab="code" title="Код (Ctrl+2)" data-icon="code"></button>
+        </div>
+      </div>
+
+      <label class="search">
+        <span data-icon="search"></span>
+        <input id="searchInput" placeholder="Поиск" spellcheck="false">
+        <kbd>Ctrl K</kbd>
+      </label>
+
+      <nav class="side-nav">
+        <button class="nav-item" id="navNew"><span data-icon="plus"></span><span class="lbl">Новый чат</span><kbd>Ctrl N</kbd></button>
+        <button class="nav-item" id="navProjects"><span data-icon="folders"></span><span>Проекты</span></button>
+        <button class="nav-item" id="navMedia"><span data-icon="images"></span><span>Медиа</span></button>
+      </nav>
+
+      <div class="side-scroll" id="sideScroll">
+        <div class="sec" id="pinnedSec">
+          <div class="sec-label">Закреплённые</div>
+          <div id="pinnedList"></div>
+        </div>
+        <div class="sec">
+          <div class="sec-label" id="recentLabel">Недавние</div>
+          <div id="recentList"></div>
+        </div>
+      </div>
+
+      <div class="side-bottom">
+        <button class="account" id="accountBtn" title="Исполнители и настройки">
+          <span class="avatar" id="avatar">S</span>
+          <span class="acc-name" id="accName">user</span>
+          <span class="acc-dots" id="agentDots"></span>
+        </button>
+        <button class="icon-btn sm" id="petsBtn" title="Питомцы" data-icon="paw"></button>
+        <button class="icon-btn sm" id="settingsBtn" title="Настройки (Ctrl ,)" data-icon="settings"></button>
+      </div>
+    </aside>
+
+    <!-- ============ Основная область ============ -->
+    <main class="main" id="main">
+      <canvas class="ascii" id="ascii"></canvas>
+
+      <header class="topbar drag">
+        <button class="icon-btn sm no-drag reveal-side" id="expandBtn" title="Показать панель" data-icon="panel"></button>
+        <div class="crumbs no-drag" id="crumbs"></div>
+        <div class="top-right no-drag">
+          <button class="top-btn hidden" id="workBtn" title="Файлы и терминал (Ctrl+J)"><span data-icon="layout"></span></button>
+          <button class="top-btn" id="progressBtn" title="Прогресс (Ctrl+.)"><span data-icon="panelRight"></span></button>
+        </div>
+      </header>
+
+      <!-- Чат -->
+      <section class="view" id="viewChat">
+        <div class="scroller" id="scroller">
+          <div class="thread" id="thread"></div>
+        </div>
+
+        <div class="hero" id="hero">
+          <h1 id="greeting">Добрый вечер</h1>
+          <p id="heroSub">Опишите задачу — Synapse сам выберет исполнителя</p>
+        </div>
+
+        <div class="dock" id="dock">
+          <button class="key-notice hidden" id="keyBanner">
+            <span data-icon="key"></span><span>Добавьте ключ Google AI Studio для чата, изображений и видео</span><span data-icon="chevronRight"></span>
+          </button>
+          <div class="composer" id="composer">
+            <div class="ultra-ring"></div>
+            <div class="attachments" id="attachments"></div>
+            <div class="composer-row">
+              <button class="icon-btn" id="plusBtn" title="Добавить" data-icon="plus"></button>
+              <div class="input-wrap">
+                <div class="hl" id="hl" aria-hidden="true"></div>
+                <textarea id="input" rows="1" placeholder="Опишите задачу или задайте вопрос" spellcheck="true"></textarea>
+              </div>
+              <button class="send-btn" id="sendBtn" title="Отправить (Enter)" disabled>
+                <span class="ic-send" data-icon="arrowUp"></span>
+                <span class="ic-stop" data-icon="stop"></span>
+              </button>
+            </div>
+          </div>
+          <div class="composer-meta">
+            <div class="meta-left">
+              <button class="meta-btn" id="envBtn"><span class="mb-ic" data-icon="laptop"></span><span class="mb-lbl">Папка</span></button>
+              <button class="meta-btn" id="modeBtn"><span class="mb-lbl">Авто</span></button>
+            </div>
+            <div class="meta-center" id="metaHint">Synapse может ошибаться — проверяйте результат</div>
+            <div class="meta-right">
+              <button class="meta-btn strong" id="agentBtn"><span class="mb-lbl">Авто</span></button>
+              <button class="meta-btn team-btn hidden" id="teamBtn" title="Команда субагентов"><span data-icon="users"></span><span class="mb-lbl">Команда</span></button>
+              <button class="meta-btn effort-btn" id="effortBtn" title="Effort — сколько думать (Ctrl+E)"><span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span class="mb-lbl">Авто</span></button>
+              <button class="meta-btn ultra-btn" id="ultraBtn" title="Ultra — максимум усилий (Ctrl+U)"><span class="ultra-word">Ultra</span></button>
+              <button class="ring" id="ringBtn" title="Контекст и лимиты"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.5"/><circle class="arc" cx="10" cy="10" r="7.5"/></svg></button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Страницы -->
+      <section class="view page hidden" id="viewPage"></section>
+
+      <!-- Панель прогресса -->
+      <aside class="progress" id="progress">
+        <div class="pg-head"><b>Прогресс</b><button class="icon-btn xs" id="progressClose" data-icon="x"></button></div>
+        <div class="pg-body" id="progressBody"></div>
+      </aside>
+    </main>
+  </div>
+
+  <div class="pets-layer" id="petsLayer"></div>
+
+  <div class="popover" id="menu" role="menu"></div>
+  <div class="popover ctx-pop" id="ctxPop"></div>
+
+  <!-- Настройки -->
+  <div class="modal-wrap" id="settingsModal" aria-hidden="true">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal" role="dialog" aria-label="Настройки">
+      <nav class="modal-nav" id="settingsNav">
+        <div class="modal-title">Настройки</div>
+        <button data-stab="api" class="active"><span data-icon="key"></span>Gemini API</button>
+        <button data-stab="agents"><span data-icon="bot"></span>Агенты</button>
+        <button data-stab="look"><span data-icon="monitor"></span>Внешний вид</button>
+        <button data-stab="net"><span data-icon="globe"></span>Сеть</button>
+        <button data-stab="memory"><span data-icon="brain"></span>Память</button>
+        <button data-stab="pets"><span data-icon="paw"></span>Питомцы</button>
+        <button data-stab="log"><span data-icon="list"></span>Журнал</button>
+        <button data-stab="about"><span data-icon="info"></span>О программе</button>
+      </nav>
+      <div class="modal-body" id="settingsBody"></div>
+      <button class="icon-btn modal-close" data-close data-icon="x"></button>
+    </div>
+  </div>
+
+  <div class="drop-overlay" id="dropOverlay"><div><span data-icon="image"></span>Отпустите, чтобы прикрепить</div></div>
+  <div class="toasts" id="toasts"></div>
+  <input type="file" id="fileInput" accept="image/*" multiple hidden>
+
+  <script src="vendor/marked.js"></script>
+  <script src="vendor/purify.js"></script>
+  <script src="vendor/highlight.js"></script>
+  <script src="i18n.js"></script>
+  <script src="icons.js"></script>
+  <script src="ascii.js"></script>
+  <script src="pets.js"></script>
+  <script src="workbench.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+name: Release
+
+# Сборка установщика Windows. По тегу vX.Y.Z — публикуется релиз с установщиком.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Check
+        run: node scripts/check.js
+
+      - name: Build installer
+        run: npx electron-builder --win nsis --x64 --publish never -c.win.signAndEditExecutable=true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Synapse-Setup
+          path: dist/Synapse-Setup-*.exe
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Synapse-Setup-*.exe
+          generate_release_notes: true

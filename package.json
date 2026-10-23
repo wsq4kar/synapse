@@ -1,0 +1,83 @@
+{
+  "name": "synapse-agent",
+  "productName": "Synapse",
+  "version": "0.1.10",
+  "description": "Synapse — a new gen of vibecode. Desktop AI router for Claude Code, Codex, Gemini CLI, OpenCode and Gemini API.",
+  "keywords": [
+    "ai",
+    "agent",
+    "claude-code",
+    "codex",
+    "gemini",
+    "opencode",
+    "electron",
+    "vibecode"
+  ],
+  "homepage": "https://github.com/wsq4kar/synapse#readme",
+  "bugs": {
+    "url": "https://github.com/wsq4kar/synapse/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wsq4kar/synapse.git"
+  },
+  "license": "GPL-3.0-only",
+  "author": "wsq4kar",
+  "private": true,
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "icon": "node build/make-icon.js",
+    "check": "node scripts/check.js",
+    "dist": "electron-builder --win nsis --x64 --publish never"
+  },
+  "devDependencies": {
+    "@highlightjs/cdn-assets": "*",
+    "@resvg/resvg-js": "*",
+    "dompurify": "*",
+    "electron": "45.0.0",
+    "electron-builder": "26.15.3",
+    "marked": "*",
+    "resedit": "^3.1.0"
+  },
+  "build": {
+    "appId": "dev.wsq4ka.synapse",
+    "productName": "Synapse",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "build/icon.png",
+      "package.json",
+      "LICENSE"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Synapse",
+      "artifactName": "Synapse-Setup-${version}.${ext}",
+      "installerLanguages": [
+        "ru_RU",
+        "en_US"
+      ],
+      "language": "1049"
+    }
+  }
+}

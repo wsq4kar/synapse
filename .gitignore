@@ -1,0 +1,21 @@
+# зависимости и сборка
+node_modules/
+dist/
+out/
+
+# служебное
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# локальные данные и секреты — никогда не коммитить
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+secrets.bin
