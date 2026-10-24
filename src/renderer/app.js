@@ -1309,7 +1309,7 @@ function renderMeta() {
   ab.classList.toggle('on', arenaOn());
   ab.querySelector('.mb-lbl').textContent = t('Арена');
   ab.title = t('Арена: большие модели планируют, спорят, пишут свои варианты и голосуют за лучший. Тратит намного больше лимитов.');
-  $('#composer').classList.toggle('arena', code && arenaOn());
+  $('#composer').classList.toggle('arena-on', code && arenaOn());
   if (state.view.type === 'chat') Workbench.sync(chat);
   $('#composer').classList.toggle('ultra', !!state.settings.ultra || hasUltraWord($('#input').value));
   $('#metaHint').textContent = code

@@ -905,7 +905,7 @@ body.wb-dragging iframe { pointer-events: none; }
 .arena-btn.on { color: var(--arena); background: color-mix(in srgb, var(--arena) 11%, transparent); }
 .arena-btn.on .ic { animation: arSwing 2.4s var(--spring) infinite; transform-origin: 50% 60%; }
 @keyframes arSwing { 0%, 70%, 100% { transform: rotate(0); } 78% { transform: rotate(-14deg); } 88% { transform: rotate(10deg); } }
-.composer.arena:not(.ultra) { border-color: color-mix(in srgb, var(--arena) 55%, var(--line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--arena) 12%, transparent), var(--shadow); transition: box-shadow .4s var(--ease-out), border-color .4s; }
+.composer.arena-on:not(.ultra) { border-color: color-mix(in srgb, var(--arena) 55%, var(--line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--arena) 12%, transparent), var(--shadow); transition: box-shadow .4s var(--ease-out), border-color .4s; }
 .user-meta .aw { display: inline-flex; align-items: center; gap: 4px; color: var(--arena); font-weight: 600; }
 .user-meta .aw .ic { width: 12px; height: 12px; }
 
