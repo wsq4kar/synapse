@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+- **Arena**: the large models work as a team. A small model writes the brief; Opus 5.5, GPT-6 Astra / 6.1 Sol, Gemini 4 Argon and others plan, debate until they agree (up to 3 rounds), each build their own variant in a separate copy of the folder, vote anonymously, and the winner polishes its result. Scores, diffs and an **Apply** button; other variants can be viewed and applied too. The folder is untouched until you apply, with a warning if files changed in the meantime.
+- Arena line-up is automatic (by coding benchmarks, one model per agent first) or manual in Settings → Agents → Arena; dispatcher model and number of debate rounds are configurable.
+- If a model isn't available on your subscription, the Arena switches to the next model of the same agent.
+- Codex model list updated: GPT-6.1 Sol, GPT-6 Astra, GPT-5.6 Sol / Terra / Luna.
+
 ## 0.1.11
 
 - OpenCode: older versions that don't know `--variant` (or other new flags) are now retried without the flag instead of handing the task to another agent.

@@ -352,6 +352,7 @@ function renderMessage(m, last) {
     const meta = [];
     if (m.mode && m.mode !== 'auto' && m.mode !== 'code') meta.push(`${icon(MODES[m.mode].icon)}${MODES[m.mode].label}`);
     if (m.ultra) meta.push(`<span class="uw">Ultra</span>`);
+    if (m.arena) meta.push(`<span class="aw">${icon('swords')}${t('Арена')}</span>`);
     el.innerHTML = `
       ${m.images?.length ? `<div class="user-imgs">${m.images.filter(Boolean).map(src => `<img src="${src}" alt="">`).join('')}</div>` : ''}
       <div class="bubble">${highlightUltra(m.text, false)}</div>
@@ -395,9 +396,11 @@ function fillAssistant(el, m) {
   const running = m.status === 'running';
   const parts = [];
   const badges = [];
-  if (m.route) badges.push(`<span class="badge">${provOf(m) ? provIcon(provOf(m)) : icon(ROUTE_ICON[m.route])}${esc(m.label ? tl(m.label) : ROUTE_NAME[m.route])}</span>`);
+  if (m.route) badges.push(m.executor === 'arena' || m.arena
+    ? `<span class="badge arena-badge">${icon('swords')}${t('Арена')}</span>`
+    : `<span class="badge">${provOf(m) ? provIcon(provOf(m)) : icon(ROUTE_ICON[m.route])}${esc(m.label ? tl(m.label) : ROUTE_NAME[m.route])}</span>`);
   if (m.ultra) badges.push(`<span class="badge ultra"><span>Ultra</span></span>`);
-  if (m.reason && !(m.reason === 'выбрано вручную' && currentChat()?.kind === 'code')) badges.push(`<span>${esc(t(m.reason))}</span>`);
+  if (m.reason && !(m.reason === 'выбрано вручную' && currentChat()?.kind === 'code') && !(m.reason === 'Арена' || m.reason === t('Арена'))) badges.push(`<span>${esc(t(m.reason))}</span>`);
   if (badges.length) parts.push(`<div class="route">${badges.join('')}</div>`);
 
   for (const f of m.fallbacks || []) {
@@ -405,11 +408,12 @@ function fillAssistant(el, m) {
   }
 
   const fx = fxOf(m.id);
+  if (m.arena) parts.push(arenaHtml(m, running));
   if (m.thinking || (running && m.thinkAt && !m.thinkEnd)) parts.push(thinkHtml(m, running));
   if (m.subs?.length) parts.push(subsHtml(m));
 
   const steps = m.steps || [];
-  if (running || steps.length) {
+  if ((running && !m.arena) || steps.length) {
     const cur = [...steps].reverse().find(s => s.status === 'run');
     const head = running
       ? `<span class="dots3"><i></i><i></i><i></i></span><span class="act-text"><span class="shimmer">${esc(cur ? `${t(cur.title)} ${cur.detail || ''}` : phaseText(m))}</span></span><span class="act-time" data-since="${m.at}">${fmtSec(Math.round((Date.now() - m.at) / 1000))}</span>`
@@ -452,11 +456,210 @@ function fillAssistant(el, m) {
     </div>`);
   }
   el.innerHTML = parts.join('');
+  if (m.arena) keepDetails(el, m.id);
   enhanceCode(el);
   applyFx(el.querySelector('.md'), m);
   steps.forEach(s => fx.seen.add(s.id));
   const ti = el.querySelector('.think.live .think-inner');
   if (ti) ti.scrollTop = ti.scrollHeight;
+}
+
+
+/* ================= Арена ================= */
+const ARENA_STAGES = [['brief', 'Бриф'], ['plan', 'Планы'], ['debate', 'Спор'], ['build', 'Код'], ['vote', 'Голосование'], ['polish', 'Доработка'], ['result', 'Итог']];
+const arenaOn = () => !!state.settings.arena?.on;
+function arenaPart(A, pid) { return pid === 'd' ? A.disp : A.parts.find(p => p.id === pid); }
+function arenaEvent(m, ev) {
+  if (ev.type === 'init') {
+    m.arena = { runId: ev.runId, rounds: ev.rounds, stage: 'copy', round: 0, plans: {}, votes: {}, scores: null, winner: null, result: null,
+      parts: ev.participants.map(p => ({ ...p, status: 'wait' })), disp: ev.dispatcher ? { ...ev.dispatcher, status: 'wait' } : null };
+    return;
+  }
+  const A = m.arena;
+  if (!A) return;
+  switch (ev.type) {
+    case 'stage': A.stage = ev.stage; if (ev.round) A.round = ev.round; break;
+    case 'part': {
+      const p = arenaPart(A, ev.pid);
+      if (!p) break;
+      if (ev.status) { p.status = ev.status; p.stage = ev.stage; if (ev.status === 'run') { p.activity = ''; p.at = ev.at || Date.now(); p.end = null; } }
+      if (ev.end) p.end = ev.end;
+      if (ev.activity) p.activity = ev.activity;
+      if (ev.error) p.error = ev.error;
+      break;
+    }
+    case 'model': { const p = arenaPart(A, ev.pid); if (p) p.model = ev.model; break; }
+    case 'brief': A.brief = ev.text; break;
+    case 'plan': {
+      (A.plans[ev.pid] = A.plans[ev.pid] || []).push({ round: ev.round, text: ev.text, agree: ev.agree, objections: ev.objections || [] });
+      const p = arenaPart(A, ev.pid); if (p && ev.round) p.agree = !!ev.agree;
+      break;
+    }
+    case 'consensus': A.consensus = ev.round; break;
+    case 'built': { const p = arenaPart(A, ev.pid); if (p) { p.files = ev.files.length; p.summary = ev.summary; } break; }
+    case 'vote': A.votes[ev.pid] = { given: ev.given || {}, note: ev.note || '' }; break;
+    case 'scores': A.scores = ev.scores; A.winner = ev.winner; break;
+    case 'result': A.result = { files: ev.files, variants: ev.variants, dir: ev.dir }; A.runId = ev.runId; break;
+  }
+}
+const arenaName = (p) => p?.model ? prettyModel(p.model) : (p?.label || '');
+function arenaStageName(id, A) {
+  const s = ARENA_STAGES.find(x => x[0] === id);
+  if (!s) return id === 'copy' ? t('Копирую папку') : id;
+  return id === 'debate' && A?.round ? `${t(s[1])} ${A.round}/${A.rounds}` : t(s[1]);
+}
+function diffHtml(d) {
+  return `<pre class="ar-diff">${String(d || '').split('\n').map(l => {
+    const c = l.startsWith('+') ? 'add' : l.startsWith('-') ? 'del' : l === '…' || l.startsWith('@@') ? 'gap' : '';
+    return `<span class="${c}">${esc(l) || ' '}</span>`;
+  }).join('')}</pre>`;
+}
+function arenaFilesHtml(files, pre = 'f') {
+  if (!files?.length) return `<div class="note">${t('Изменений в файлах нет')}</div>`;
+  const K = { add: ['A', t('новый')], mod: ['M', t('изменён')], del: ['D', t('удалён')] };
+  return `<div class="ar-files">${files.map(f => `<details class="ar-file ${f.kind}" data-k="${pre}:${esc(f.rel)}">
+    <summary><span class="ar-k">${K[f.kind][0]}</span><span class="ar-rel" title="${esc(f.rel)}">${esc(f.rel)}</span>
+      <span class="ar-stat">${f.add ? `<i class="a">+${f.add}</i>` : ''}${f.del ? `<i class="d">−${f.del}</i>` : ''}</span><span class="chev">${icon('chevronRight')}</span></summary>
+    ${diffHtml(f.diff)}</details>`).join('')}</div>`;
+}
+function arenaHtml(m, running) {
+  const A = m.arena;
+  const cur = ARENA_STAGES.findIndex(s => s[0] === A.stage);
+  const steps = ARENA_STAGES.map(([id], i) => {
+    const st = A.stage === 'result' && !running ? 'done' : i < cur ? 'done' : i === cur ? 'cur' : '';
+    const skip = (id === 'debate' && A.parts.length < 2) || (id === 'vote' && A.parts.length < 2) || (id === 'polish' && A.parts.length < 2);
+    return skip ? '' : `<span class="ar-st ${st}">${st === 'done' ? icon('check') : ''}${esc(arenaStageName(id, i === cur ? A : null))}</span>`;
+  }).join('<i class="ar-sep"></i>');
+  const score = (p) => A.scores && A.scores[p.id] != null && A.scores[p.id] >= 0 ? A.scores[p.id] : null;
+  const card = (p, i) => {
+    const win = A.winner === p.id;
+    const st = p.status === 'run' ? 'run' : p.status === 'error' ? 'error' : p.status === 'done' ? 'done' : 'wait';
+    const what = p.status === 'run' ? `<span class="shimmer">${esc(arenaStageName(p.stage, A))}</span>${p.activity ? ` · ${esc(t(p.activity.split(' ')[0]))} ${esc(p.activity.split(' ').slice(1).join(' '))}` : ''}`
+      : p.status === 'error' ? esc(p.error || t('ошибка')) : p.status === 'done' ? esc(arenaStageName(p.stage, null)) + ' ' + t('готово') : t('ждёт');
+    const sc = score(p);
+    return `<div class="ar-card ${st} ${win ? 'win' : ''}" style="--i:${i}">
+      <div class="ar-top">${provIcon(p.agent)}<b title="${esc(p.model || '')}">${esc(arenaName(p))}</b>
+        ${win ? `<span class="ar-crown" title="${t('Победитель')}">${icon('crown')}</span>` : ''}
+        ${sc != null ? `<span class="ar-score">${sc.toFixed(1)}</span>` : ''}
+        ${p.agree != null && A.stage === 'debate' ? `<span class="ar-agree ${p.agree ? 'yes' : 'no'}" title="${p.agree ? t('Согласен') : t('Есть возражения')}">${icon(p.agree ? 'handshake' : 'alert')}</span>` : ''}</div>
+      <div class="ar-what ${st}">${what}</div>
+      ${p.files != null ? `<div class="ar-meta">${t('файлов изменено')}: ${p.files}</div>` : ''}
+    </div>`;
+  };
+  const parts = [];
+  parts.push(`<div class="ar-head">${icon('swords')}<b>${t('Арена')}</b><span class="dim">${A.parts.length} ${plural(A.parts.length, [t('модель'), t('модели'), t('моделей')])} · ${t('до {n} кругов спора', { n: A.rounds })}</span>
+    ${running ? `<span class="act-time" data-since="${m.at}">${fmtSec(Math.round((Date.now() - m.at) / 1000))}</span>` : ''}</div>`);
+  parts.push(`<div class="ar-steps">${steps}</div>`);
+  if (A.disp) parts.push(`<div class="ar-disp">${provIcon(A.disp.agent)}<span>${t('Диспетчер')}: <b>${esc(arenaName(A.disp))}</b> — ${A.disp.status === 'run' ? `<span class="shimmer">${t('пишет бриф')}</span>` : A.disp.status === 'done' ? t('бриф готов') : A.disp.status === 'error' ? esc(A.disp.error || t('ошибка')) : t('ждёт')}</span></div>`);
+  parts.push(`<div class="ar-grid">${A.parts.map(card).join('')}</div>`);
+  if (A.consensus) parts.push(`<div class="ar-note">${icon('handshake')}${t('Согласие достигнуто в круге {n}', { n: A.consensus })}</div>`);
+  if (A.brief) parts.push(`<details class="ar-sec" data-k="brief"><summary>${icon('file')}${t('Бриф от диспетчера')}<span class="chev">${icon('chevronRight')}</span></summary><div class="md">${renderMarkdown(A.brief)}</div></details>`);
+  const planParts = A.parts.filter(p => A.plans[p.id]?.length);
+  if (planParts.length) {
+    parts.push(`<details class="ar-sec" data-k="plans"><summary>${icon('message')}${t('Планы и спор')}<span class="chev">${icon('chevronRight')}</span></summary>
+      ${planParts.map(p => `<details class="ar-sub" data-k="plan:${p.id}"><summary>${provIcon(p.agent)}<b>${esc(arenaName(p))}</b><span class="dim">${A.plans[p.id].length - 1 > 0 ? `${t('кругов')}: ${A.plans[p.id].length - 1}` : t('план')}</span><span class="chev">${icon('chevronRight')}</span></summary>
+        ${A.plans[p.id].map(x => `<div class="ar-round"><div class="ar-rh">${x.round ? `${t('Круг')} ${x.round}` : t('Первый план')}${x.round ? `<span class="ar-agree ${x.agree ? 'yes' : 'no'}">${x.agree ? t('согласен') : t('возражает')}</span>` : ''}</div>
+          <div class="md">${renderMarkdown(x.text)}</div>
+          ${x.objections?.length && !x.agree ? `<ul class="ar-obj">${x.objections.map(o => `<li>${esc(o)}</li>`).join('')}</ul>` : ''}</div>`).join('')}
+      </details>`).join('')}
+    </details>`);
+  }
+  const voters = A.parts.filter(p => A.votes?.[p.id]).map(p => p.id);
+  if (voters.length) {
+    const cols = A.parts.filter(p => A.scores ? p.id in A.scores : true);
+    parts.push(`<details class="ar-sec" data-k="votes" ${A.result ? '' : 'open'}><summary>${icon('crown')}${t('Голосование')}<span class="chev">${icon('chevronRight')}</span></summary>
+      <table class="ar-votes"><thead><tr><th>${t('Кто оценивает')}</th>${cols.map(p => `<th>${esc(arenaName(p))}</th>`).join('')}</tr></thead><tbody>
+      ${voters.map(v => `<tr><td>${esc(arenaName(arenaPart(A, v)))}</td>${cols.map(p => `<td>${p.id === v ? '—' : (A.votes[v].given[p.id] ?? '·')}</td>`).join('')}</tr>`).join('')}
+      ${A.scores ? `<tr class="avg"><td>${t('Средняя')}</td>${cols.map(p => `<td>${A.scores[p.id] >= 0 ? A.scores[p.id].toFixed(1) : '—'}</td>`).join('')}</tr>` : ''}
+      </tbody></table></details>`);
+  }
+  if (A.result) {
+    const w = arenaPart(A, A.winner);
+    const others = (A.result.variants || []).filter(v => v.id !== A.winner && v.alive);
+    parts.push(`<div class="ar-result">
+      <div class="ar-rhead">${icon('crown')}<span>${t('Лучший вариант')}: <b>${esc(arenaName(w))}</b>${A.scores?.[A.winner] >= 0 ? ` · ${A.scores[A.winner].toFixed(1)}/10` : ''}</span></div>
+      ${arenaFilesHtml(A.result.files)}
+      ${A.conflicts?.length ? `<div class="fallback">${icon('alert')}<div>${t('После запуска Арены эти файлы изменились в папке')}:<small>${esc(A.conflicts.join(', '))}</small></div><button class="btn sm" data-arena-apply="${A.applyPid || A.winner}" data-force="1" style="margin-left:auto">${t('Всё равно применить')}</button></div>` : ''}
+      <div class="ar-actions">
+        ${A.applied ? `<span class="ar-applied">${icon('check')}${t('Применено в папку')}${A.applied.pid !== A.winner ? ` (${esc(arenaName(arenaPart(A, A.applied.pid)))})` : ''}</span>`
+          : `<button class="btn primary" data-arena-apply="${A.winner}">${icon('check')}${t('Применить')}</button>`}
+        <button class="btn" data-arena-open="${A.winner}">${icon('folderOpen')}${t('Папка варианта')}</button>
+        ${others.map(v => `<button class="btn ghost" data-arena-variant="${v.id}">${provIcon(arenaPart(A, v.id)?.agent)}${esc(arenaName(arenaPart(A, v.id)))}</button>`).join('')}
+      </div>
+      ${A.view && A.viewFiles ? `<div class="ar-variant"><div class="ar-rhead">${provIcon(arenaPart(A, A.view)?.agent)}<span>${t('Вариант')} <b>${esc(arenaName(arenaPart(A, A.view)))}</b></span>
+          <button class="btn sm" data-arena-apply="${A.view}">${t('Применить этот вариант')}</button><button class="icon-btn sm" data-arena-variant="${A.view}" title="${t('Скрыть')}">${icon('x')}</button></div>
+        ${arenaFilesHtml(A.viewFiles, `v${A.view}`)}</div>` : ''}
+    </div>`);
+  }
+  return `<div class="arena ${running ? 'live' : ''}">${parts.join('')}</div>`;
+}
+// раскрытые разделы карточки не сворачиваются при обновлении
+const detOpen = new Map();
+function keepDetails(el, mid) {
+  el.querySelectorAll('details[data-k]').forEach(d => {
+    const k = `${mid}|${d.dataset.k}`;
+    if (detOpen.has(k)) d.open = detOpen.get(k);
+    d.addEventListener('toggle', () => detOpen.set(k, d.open));
+  });
+}
+// Настройки → Агенты → Арена
+async function arenaSettingsHtml() {
+  const R = await api.arena.roster().catch(() => null);
+  if (!R) return '';
+  const cfg = { auto: true, rounds: 3, maxBig: 3, roster: [], ...(state.settings.arena || {}) };
+  const inst = new Set(R.agents.filter(a => a.installed).map(a => a.id));
+  const chip = (p) => `<span class="ar-chip">${provIcon(p.agent)}${esc(prettyModel(p.model) || p.label)}</span>`;
+  const seg = (k, opts, cur) => `<div class="seg">${opts.map(([v, l]) => `<button data-ar-k="${k}" data-ar-v="${v}" class="${String(cur) === String(v) ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+  const bigs = R.models.filter(m => m.tier === 'big' && inst.has(m.agent));
+  const smalls = R.models.filter(m => m.tier === 'small' && inst.has(m.agent));
+  const inRoster = (m) => (cfg.roster || []).some(r => r.model === m.model && r.on !== false);
+  return `<h3 class="sub-h" style="display:flex;align-items:center;gap:7px">${icon('swords')}${t('Арена')}</h3>
+    <p class="hint" style="margin:-4px 0 12px">${t('Маленькая модель пишет бриф, большие предлагают планы, спорят до согласия, каждая пишет свой вариант кода в отдельной копии папки и голосует за лучший. Итог применяется кнопкой. Включается кнопкой «Арена» во вкладке «Код».')}</p>
+    <div class="field"><span class="field-label">${t('Состав')}</span>${seg('auto', [['1', t('Авто')], ['0', t('Вручную')]], cfg.auto !== false ? 1 : 0)}</div>
+    ${cfg.auto !== false ? `
+      <div class="field"><span class="field-label">${t('Участники')}</span><div class="ar-chips">${R.participants.length ? R.participants.map(chip).join('') : `<span class="hint">${t('Нет установленных агентов')}</span>`}</div></div>
+      <div class="field"><span class="field-label">${t('Сколько больших моделей')}</span>${seg('maxBig', [['2', '2'], ['3', '3'], ['4', '4']], cfg.maxBig)}</div>`
+    : `<div class="field"><span class="field-label">${t('Большие модели')}</span>${bigs.map(m => `<div class="toggle-row" data-ar-model="${esc(m.model)}" data-ar-agent="${m.agent}">${provIcon(m.agent)}
+        <span class="tr-text">${esc(prettyModel(m.model))}<small class="mono">${esc(m.model)}</small></span><span class="switch ${inRoster(m) ? 'on' : ''}"></span></div>`).join('') || `<span class="hint">${t('Нет установленных агентов')}</span>`}</div>`}
+    <div class="field"><span class="field-label">${t('Диспетчер (пишет бриф)')}</span>
+      <select class="input" id="arDisp"><option value="">${t('Авто')} — ${esc(R.dispatcher ? prettyModel(R.dispatcher.model) : '—')}</option>
+        ${smalls.map(m => `<option value="${m.agent}|${esc(m.model)}" ${cfg.dispatcher?.model === m.model ? 'selected' : ''}>${esc(PROVIDERS[m.agent]?.name || m.agent)} · ${esc(prettyModel(m.model))}</option>`).join('')}</select></div>
+    <div class="field"><span class="field-label">${t('Кругов спора (максимум)')}</span>${seg('rounds', [1, 2, 3, 4, 5].map(n => [String(n), String(n)]), cfg.rounds)}
+      <div class="hint">${t('Спор заканчивается раньше, если все модели согласны. Каждый круг расходует лимиты всех участников.')}</div></div>`;
+}
+async function saveArena(patch) {
+  const sb = $('#settingsBody'), y = sb?.scrollTop || 0;
+  await saveSettings({ arena: { ...(state.settings.arena || {}), ...patch } });
+  await renderSettings();
+  if (sb) sb.scrollTop = y;
+}
+
+async function arenaAction(tg, m, chat) {
+  const A = m?.arena;
+  if (!A) return false;
+  const ap = tg.closest('[data-arena-apply]');
+  if (ap) {
+    const pid = ap.dataset.arenaApply;
+    ap.disabled = true;
+    try {
+      const r = await api.arena.apply({ runId: A.runId, pid, force: ap.dataset.force === '1' });
+      if (!r.ok) { A.conflicts = r.conflicts; A.applyPid = pid; toast(t('Файлы в папке изменились после запуска — проверьте и подтвердите'), true); }
+      else { A.applied = { pid, at: Date.now() }; A.conflicts = null; toast(t('Применено: {n} файлов', { n: r.count })); Workbench.refresh?.(); }
+    } catch (e) { toast(cleanErr(e), true); }
+    persist(chat); updateMessage(chat.id, m.id);
+    return true;
+  }
+  const op = tg.closest('[data-arena-open]');
+  if (op) { await api.arena.open({ runId: A.runId, pid: op.dataset.arenaOpen }); return true; }
+  const vr = tg.closest('[data-arena-variant]');
+  if (vr) {
+    const pid = vr.dataset.arenaVariant;
+    if (A.view === pid) { A.view = null; A.viewFiles = null; }
+    else { try { A.viewFiles = await api.arena.files({ runId: A.runId, pid }); A.view = pid; } catch (e) { toast(cleanErr(e), true); } }
+    updateMessage(chat.id, m.id);
+    return true;
+  }
+  return false;
 }
 
 /* ================= Рассуждение и субагенты ================= */
@@ -823,7 +1026,7 @@ function submit({ now = false } = {}) {
   if (!text && !state.attachments.length) return;
   const chat = currentChat();
   if (!chat) return;
-  const item = { id: uid(), text, mode: chat.kind === 'code' ? 'code' : state.mode, images: state.attachments, ultra: !!state.settings.ultra || hasUltraWord(text) };
+  const item = { id: uid(), text, mode: chat.kind === 'code' ? 'code' : state.mode, images: state.attachments, ultra: !!state.settings.ultra || hasUltraWord(text), arena: chat.kind === 'code' && arenaOn() };
   input.value = ''; state.attachments = []; renderAttachments(); syncInput();
   bump();
   if (isRunning(chat.id)) {
@@ -842,7 +1045,7 @@ async function run(chat, item, { retry = false } = {}) {
   const prevAssistant = [...chat.messages].reverse().find(m => m.role === 'assistant' && m.route);
   const history = chat.messages.filter(m => m.text).map(m => ({ role: m.role, text: m.text }));
   if (retry && history.at(-1)?.role === 'user') history.pop();
-  const userMsg = { id: uid(), role: 'user', text: item.text, mode: item.mode, ultra: item.ultra, images: item.images.map(a => a.thumb), at: Date.now() };
+  const userMsg = { id: uid(), role: 'user', text: item.text, mode: item.mode, ultra: item.ultra, arena: !!item.arena, images: item.images.map(a => a.thumb), at: Date.now() };
   const aMsg = { id: uid(), role: 'assistant', status: 'running', text: '', steps: [], fallbacks: [], files: [], ultra: item.ultra, at: Date.now() };
   if (!retry) chat.messages.push(userMsg);
   chat.messages.push(aMsg);
@@ -853,7 +1056,7 @@ async function run(chat, item, { retry = false } = {}) {
   pets.react('start');
   try {
     const taskId = await api.task.run({
-      chatId: chat.id, text: item.text || t('Опиши изображение'), mode: item.mode, ultra: item.ultra, effort: state.settings.effort, team: chat.kind === 'code' && !!state.settings.team,
+      chatId: chat.id, text: item.text || t('Опиши изображение'), mode: item.mode, ultra: item.ultra, effort: state.settings.effort, team: chat.kind === 'code' && !!state.settings.team, arena: !!item.arena,
       executor: chat.executor || null, agentModel: chat.agentModel || null, chatModel: chat.chatModel || null,
       images: item.images.map(a => ({ mime: a.mime, data: a.data })),
       cwd: chat.cwd, history, claudeSession: chat.claudeSession, opencodeSession: chat.opencodeSession, lastRoute: prevAssistant?.route || null,
@@ -915,6 +1118,7 @@ async function onTaskEvent(ev) {
       }
       break;
     }
+    case 'arena': arenaEvent(m, ev); break;
     case 'todos': chat.todos = ev.todos; break;
     case 'context': chat.context = { used: ev.used, window: ev.window || chat.context?.window || null, compactAt: ev.compactAt || null, model: ev.model || null, at: Date.now() }; if (currentChat() === chat) renderCtx(); break;
     case 'limits': setLimits(ev.provider, { status: ev.status, windows: ev.windows, at: ev.at || Date.now() }); break;
@@ -999,7 +1203,7 @@ function retry(msgId) {
   const user = chat.messages.slice(0, idx).reverse().find(m => m.role === 'user');
   if (!user) return;
   chat.messages.splice(idx, 1);
-  run(chat, { text: user.text, mode: user.mode || 'auto', images: [], ultra: !!user.ultra }, { retry: true });
+  run(chat, { text: user.text, mode: user.mode || 'auto', images: [], ultra: !!user.ultra, arena: !!user.arena }, { retry: true });
 }
 
 /* ================= Композер ================= */
@@ -1072,6 +1276,12 @@ function renderMeta() {
   const tb = $('#teamBtn');
   tb.classList.toggle('hidden', !code);
   tb.classList.toggle('on', !!state.settings.team);
+  const ab = $('#arenaBtn');
+  ab.classList.toggle('hidden', !code);
+  ab.classList.toggle('on', arenaOn());
+  ab.querySelector('.mb-lbl').textContent = t('Арена');
+  ab.title = t('Арена: большие модели планируют, спорят, пишут свои варианты и голосуют за лучший. Тратит намного больше лимитов.');
+  $('#composer').classList.toggle('arena', code && arenaOn());
   if (state.view.type === 'chat') Workbench.sync(chat);
   $('#composer').classList.toggle('ultra', !!state.settings.ultra || hasUltraWord($('#input').value));
   $('#metaHint').textContent = code
@@ -1553,7 +1763,8 @@ async function renderSettings() {
         <span class="tr-text">${t('Умный выбор исполнителя')}<small>${t('Если по словам задача неясна, Synapse коротко спрашивает Gemini')}</small></span></div>
       <div class="field" style="margin-top:16px"><label>${t('Папка для новых сессий')}</label>
         <div class="row"><input class="input mono" id="wsRoot" value="${esc(s.workspaceRoot)}" spellcheck="false"><button class="btn" id="wsPick">${icon('folder')}${t('Выбрать')}</button></div>
-        <div class="hint">${t('Если окружение не выбрано, агент работает в отдельной подпапке здесь.')}</div></div>`;
+        <div class="hint">${t('Если окружение не выбрано, агент работает в отдельной подпапке здесь.')}</div></div>
+      ${await arenaSettingsHtml()}`;
   }
   if (stab === 'net') {
     const n = s.net || {};
@@ -1808,6 +2019,30 @@ function bindSettings(body) {
   const all = (sel, fn) => body.querySelectorAll(sel).forEach(fn);
   bindTunnel(body);
   bindNet(body);
+  all('[data-ar-k]', b => b.addEventListener('click', async () => {
+    const k = b.dataset.arK, v = b.dataset.arV;
+    if (k === 'auto') {
+      const auto = v === '1';
+      const patch = { auto };
+      // при переходе на «Вручную» начинаем с текущего автосостава
+      if (!auto && !(state.settings.arena?.roster || []).length) {
+        const R = await api.arena.roster().catch(() => null);
+        patch.roster = (R?.participants || []).map(p => ({ agent: p.agent, model: p.model, on: true }));
+      }
+      return saveArena(patch);
+    }
+    saveArena({ [k]: Number(v) });
+  }));
+  all('[data-ar-model]', b => b.addEventListener('click', () => {
+    const roster = [...(state.settings.arena?.roster || [])];
+    const i = roster.findIndex(r => r.model === b.dataset.arModel);
+    if (i >= 0) roster.splice(i, 1); else roster.push({ agent: b.dataset.arAgent, model: b.dataset.arModel, on: true });
+    saveArena({ roster });
+  }));
+  on('#arDisp', 'change', (e) => {
+    const [agent, model] = e.target.value ? e.target.value.split('|') : [];
+    saveArena({ dispatcher: agent ? { agent, model } : null });
+  });
   bindMemory(body);
   all('[data-goto-stab]', el => el.addEventListener('click', () => { stab = el.dataset.gotoStab; renderSettings(); }));
   on('#keyShow', 'click', () => { const i = $('#keyInput'); i.type = i.type === 'password' ? 'text' : 'password'; });
@@ -1940,6 +2175,18 @@ function bindUI() {
     toast(on ? t('Команда: Claude Code будет раздавать части задачи субагентам') : t('Команда выключена'));
     if (on) { const b = $('#teamBtn').getBoundingClientRect(); sparks(b.left + b.width / 2, b.top + b.height / 2); }
   });
+  $('#arenaBtn').addEventListener('click', async () => {
+    const on = !arenaOn();
+    state.settings = await api.settings.set({ arena: { ...(state.settings.arena || {}), on } });
+    renderMeta();
+    if (on) {
+      const r = await api.arena.roster().catch(() => null);
+      const who = r?.participants?.map(p => prettyModel(p.model) || p.label).join(', ');
+      toast(who ? t('Арена: {who}', { who }) : t('Арена включена'));
+      const b = $('#arenaBtn').getBoundingClientRect(); sparks(b.left + b.width / 2, b.top + b.height / 2);
+      pets.react('ultra');
+    } else toast(t('Арена выключена'));
+  });
   $('#ringBtn').addEventListener('click', toggleCtxPop);
   $('#progressBtn').addEventListener('click', toggleProgress);
   $('#workBtn').addEventListener('click', () => Workbench.toggle());
@@ -2001,6 +2248,7 @@ function bindUI() {
     if (tg.closest('[data-copy]') && m) { await navigator.clipboard.writeText(m.text); return toast(t('Скопировано')); }
     const cc = tg.closest('[data-copy-code]');
     if (cc) { await navigator.clipboard.writeText(cc.closest('.codeblock').querySelector('code').textContent); cc.innerHTML = `${icon('check')}<span>${t('Скопировано')}</span>`; setTimeout(() => { cc.innerHTML = `${icon('copy')}<span>${t('Копировать')}</span>`; }, 1500); return; }
+    if (m?.arena && await arenaAction(tg, m, chat)) return;
     if (tg.closest('[data-retry]') && m && !isRunning(chat.id)) return retry(m.id);
   });
   document.addEventListener('dblclick', (e) => { const r = e.target.closest('.row-item[data-chat]'); if (r) renameChat(r.dataset.chat); });

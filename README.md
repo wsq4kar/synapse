@@ -43,6 +43,9 @@ Synapse reads the task and picks the executor. Coding goes to an agent, a questi
 ### Four coding agents
 **Claude Code**, **Codex**, **Gemini CLI** and **OpenCode**, each with its real models (Opus, Sonnet, GPT-5.x, Gemini, DeepSeek, GLM and more), a fallback order you set yourself, and session resume.
 
+### Arena
+Turn on **Arena** in the Code tab and the large models work as a team. A small model writes the brief, then Opus, GPT-6 and Gemini plan, debate (up to 3 rounds, or until they agree), each build their own variant in a separate copy of your folder, and vote anonymously for the best one. The winner fixes what the others found, and you apply the result with one button.
+
 ### Subagents and Team mode
 One request can spawn parallel subagents, each with its own live card, steps and result.
 
@@ -69,6 +72,8 @@ Light and dark themes, five font styles, text size, accent colors, conversation 
 </table>
 
 ## Screenshots
+
+<p align="center"><img src="docs/screenshots/arena.png" alt="Arena" width="100%"><br><sub><b>Arena:</b> large models plan, debate, build and vote. The best variant wins.</sub></p>
 
 <table>
 <tr>
@@ -147,6 +152,20 @@ build/                  icons, NSIS installer script
 ```
 
 </details>
+
+## How the Arena works
+
+| Stage | Who | What happens |
+|---|---|---|
+| Brief | small model (Haiku 5.5, GPT-5.6 Luna…) | reads the project and turns your request into goals and acceptance criteria |
+| Plans | every large model | proposes an approach in its own copy of the folder |
+| Debate | every large model | reads the other plans, criticises them, improves its own, says "agree" or "object"; stops early on consensus |
+| Build | every large model, `xhigh` effort (`max` with Ultra) | implements its plan in its own copy |
+| Vote | every large model | scores the other variants 1–10 anonymously and lists fixes |
+| Polish | the winner | fixes what the reviewers found |
+| Result | you | see scores and the diff; **Apply** copies the files into your folder, or pick another variant |
+
+Your folder is untouched until you press **Apply**, and Synapse warns you if files changed in the meantime. The line-up is picked automatically from the installed agents (one strongest model per agent, then the next strongest), and you can change it in **Settings → Agents → Arena**. Running several large models costs several times more of your limits than a normal request.
 
 ## Roadmap
 

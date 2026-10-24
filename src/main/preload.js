@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('synapse', {
     start: invoke('term:start'), run: invoke('term:run'), kill: invoke('term:kill'),
     onEvent: (fn) => ipcRenderer.on('term:event', (_e, d) => fn(d)),
   },
+  arena: { roster: invoke('arena:roster'), apply: invoke('arena:apply'), files: invoke('arena:files'), open: invoke('arena:open') },
   open: invoke('shell:open'),
   reveal: invoke('shell:reveal'),
   saveAs: invoke('file:saveAs'),

@@ -102,7 +102,7 @@ function buildCommand(id, { access, sessionId, lastMessageFile, ultra, model, ef
     }
     case 'codex': {
       const args = ['exec', '--json', '--skip-git-repo-check',
-        ...(access === 'full' ? ['--dangerously-bypass-approvals-and-sandbox'] : ['--sandbox', 'workspace-write']),
+        ...(access === 'full' ? ['--dangerously-bypass-approvals-and-sandbox'] : ['--sandbox', access === 'read' ? 'read-only' : 'workspace-write']),
         ...(ef ? ['-c', `model_reasoning_effort=${CODEX_EFFORT[ef]}`] : []),
         '-c', 'model_reasoning_summary=auto', // рассуждения модели в выводе
         ...(m ? ['-m', m] : []),

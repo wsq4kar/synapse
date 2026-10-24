@@ -13,6 +13,7 @@ const tunnel = require('./tunnel');
 const netproxy = require('./netproxy');
 const firewall = require('./firewall');
 const codexLimits = require('./codexlimits');
+const arena = require('./arena');
 const i18n = require('./i18n');
 const { t } = i18n;
 
@@ -332,6 +333,12 @@ async function runTask(taskId, input, signal) {
   const started = Date.now();
 
   send(taskId, { kind: 'status', status: 'routing' });
+  // Арена: несколько больших моделей вместе (только во вкладке «Код»)
+  if (input.arena && input.mode === 'code') {
+    send(taskId, { kind: 'route', route: 'code', reason: t('Арена') });
+    const log = (extra) => store.logUsage({ route: 'code', ms: Date.now() - started, chars: text.length, arena: true, ...extra });
+    return runArena(taskId, input, settings, text, images, signal, log);
+  }
   // Агент выбран вручную в меню модели — задача уходит ему (кроме явных «Изображение»/«Видео»)
   const forced = input.executor && cli.LABELS[input.executor] && !['image', 'video'].includes(input.mode)
     ? { route: 'code', reason: t('выбрано вручную') } : null;
@@ -461,6 +468,48 @@ async function geminiWindow(key, model) {
     return gemModels.find(m => m.id === model)?.inputTokenLimit || null;
   } catch { return null; }
 }
+
+// ---------- Арена ----------
+const arenaRoot = () => path.join(app.getPath('userData'), 'arena');
+async function runArena(taskId, input, settings, text, images, signal, log) {
+  const agents = cliCache || (cliCache = await cli.detect(settings.cliPaths));
+  const cwd = input.cwd || path.join(settings.workspaceRoot, `chat-${String(input.chatId).slice(0, 8)}`);
+  fs.mkdirSync(cwd, { recursive: true });
+  send(taskId, { kind: 'cwd', cwd });
+  send(taskId, { kind: 'executor', executor: 'arena', label: t('Арена') });
+  let note = '';
+  if (images.length) {
+    const dir = path.join(arenaRoot(), 'attachments');
+    fs.mkdirSync(dir, { recursive: true });
+    const saved = images.map((img, i) => {
+      const f = path.join(dir, `${Date.now()}-${i}.${img.mime.split('/')[1] || 'png'}`);
+      fs.writeFileSync(f, Buffer.from(img.data, 'base64'));
+      return f;
+    });
+    note = `\n\n${t('Приложенные изображения:')}\n${saved.map(s => `- ${s}`).join('\n')}`;
+  }
+  const extraEnv = await netproxy.agentEnv();
+  const hist = (input.history || []).filter(m => m.text).slice(-6).map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text.slice(0, 1200)}`).join('\n');
+  try {
+    const r = await arena.run({
+      input, settings, agents, text: text + note, history: hist, memory: memoryText(settings),
+      cwd, root: arenaRoot(), extraEnv, signal, emit: (ev) => send(taskId, ev),
+    });
+    log({ executor: 'arena', ok: true, model: r.winner.model });
+    return send(taskId, { kind: 'done', text: r.text, executor: 'arena', cwd, usage: { ...r.usage, model: t('Арена') } });
+  } catch (e) {
+    log({ executor: 'arena', ok: false, error: String(e.message).slice(0, 200) });
+    throw e;
+  }
+}
+ipcMain.handle('arena:roster', async () => {
+  const settings = store.getSettings();
+  const agents = cliCache || (cliCache = await cli.detect(settings.cliPaths));
+  return { ...arena.roster(settings, agents), agents: agents.map(a => ({ id: a.id, label: a.label, installed: a.installed })) };
+});
+ipcMain.handle('arena:apply', (_e, { runId, pid, force } = {}) => arena.apply(arenaRoot(), runId, pid, !!force));
+ipcMain.handle('arena:files', (_e, { runId, pid } = {}) => arena.variantFiles(arenaRoot(), runId, pid));
+ipcMain.handle('arena:open', (_e, { runId, pid } = {}) => { const d = arena.variantDir(arenaRoot(), runId, pid); if (d && fs.existsSync(d)) shell.openPath(d); return !!d; });
 
 async function runCode(taskId, input, settings, text, images, signal, log) {
   const detected = cliCache || (cliCache = await cli.detect(settings.cliPaths));

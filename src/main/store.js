@@ -21,6 +21,8 @@ const DEFAULT_SETTINGS = {
   tunnel: { enabled: false, host: '', user: 'root', port: 22, key: '' }, // Gemini через SSH-сервер
   modelsPicked2: false,
   team: false,                     // режим «Команда»: Claude Code раздаёт части задачи субагентам
+  // Арена: большие модели планируют, спорят, пишут свои варианты и голосуют за лучший
+  arena: { on: false, auto: true, rounds: 3, maxBig: 3, roster: [], dispatcher: null },
   memoryEnabled: true,             // передавать «Обо мне» агентам и Gemini
   allowConnectors: true,           // скиллы и коннекторы Claude Code без подтверждения
   claudeEnv: null,                 // что Claude Code загрузил в прошлый раз (скиллы, коннекторы)           // один раз обновляем старые модели по умолчанию
@@ -37,7 +39,7 @@ const DEFAULT_SETTINGS = {
   // модели, которые можно выбрать для каждого CLI (флаг --model / -m)
   cliModels: {
     claude: 'claude-fable-5-1, claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5, claude-opus-5, claude-sonnet-5',
-    codex: 'gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex',
+    codex: 'gpt-6.1-sol, gpt-6-astra, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5',
     'gemini-cli': '', // пусто — список берётся из моделей Gemini API по ключу
     // OpenCode: любые провайдеры в виде provider/model; бесплатные модели OpenCode Zen работают без входа
     opencode: 'opencode/deepseek-v4.1-flash-free, opencode/glm-5.3-flash-free, opencode/big-pickle',
