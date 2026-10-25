@@ -34,10 +34,23 @@ jobs:
       - name: Check
         run: node scripts/check.js
 
-      # bash, а не PowerShell: pwsh разбирал «-c.win…» как путь к файлу конфига, и сборка падала
-      - name: Build installer
+      # Приложение собирает electron-builder (папка dist/win-unpacked), а установщик — свой скрипт
+      # build/installer.nsi: выбор языка, без прав администратора. Так же собираются релизы локально.
+      - name: Build app
         shell: bash
-        run: npx electron-builder --win nsis --x64 --publish never --config.win.signAndEditExecutable=true
+        run: npx electron-builder --win dir --x64 --publish never
+
+      - name: Exe icon and version
+        shell: bash
+        run: node build/set-exe-icon.mjs dist/win-unpacked/Synapse.exe build/icon.ico "$(node -p "require('./package.json').version")"
+
+      - name: Build installer (NSIS)
+        shell: pwsh
+        run: |
+          $nsis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (-not (Test-Path $nsis)) { choco install nsis -y --no-progress | Out-Null }
+          & $nsis /V2 /INPUTCHARSET UTF8 build\installer.nsi
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - uses: actions/upload-artifact@v4
         with:
