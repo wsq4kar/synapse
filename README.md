@@ -46,6 +46,9 @@ Synapse reads the task and picks the executor. Coding goes to an agent, a questi
 ### Arena
 Turn on **Arena** in the Code tab and the large models work as a team. A small model writes the brief, then Opus, GPT-6 and Gemini plan, debate (up to 3 rounds, or until they agree), each build their own variant in a separate copy of your folder, and vote anonymously for the best one. The winner fixes what the others found, and you apply the result with one button.
 
+### Extensions
+One page for **MCP servers, connectors, skills and plugins** across all four agents. Turn a server on for Claude Code, Codex, Antigravity or OpenCode with one click, connect GitHub, Notion, Linear, Figma, Jira, Sentry, Stripe or Supabase in a couple of clicks, write skills in a built-in editor, and install Claude Code plugins from marketplaces or MCP servers from the official MCP registry. Everything is written into each agent's own config, so it works in the terminal too.
+
 ### Subagents and Team mode
 One request can spawn parallel subagents, each with its own live card, steps and result.
 
@@ -74,6 +77,8 @@ Light and dark themes, five font styles, text size, accent colors, conversation 
 ## Screenshots
 
 <p align="center"><img src="docs/screenshots/arena.png" alt="Arena" width="100%"><br><sub><b>Arena:</b> large models plan, debate, build and vote. The best variant wins.</sub></p>
+
+<p align="center"><img src="docs/screenshots/extensions.png" alt="Extensions" width="100%"><br><sub><b>Extensions:</b> MCP servers, connectors, skills, plugins and marketplaces for every agent</sub></p>
 
 <table>
 <tr>

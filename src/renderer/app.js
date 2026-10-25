@@ -119,6 +119,11 @@ async function init() {
   Workbench.init({ api, t, icon, esc, toast, saveSettings, settings: () => state.settings });
   applyPets();
 
+  Extensions.init({
+    api, t, esc, icon, provIcon, toast, menu, cleanErr, PROVIDERS,
+    cwd: () => { const c = state.view.type === 'chat' ? currentChat() : null; return c?.cwd || null; },
+    fmtNum: (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n)),
+  });
   bindUI();
   await Promise.all([refreshChats(), refreshProjects()]);
   newChat('chat', { push: true, focus: true });
@@ -288,6 +293,7 @@ function renderSidebar() {
   $('#navProjects').classList.toggle('on', state.view.type === 'projects' || state.view.type === 'project');
   $('#navMedia').classList.toggle('on', state.view.type === 'media');
   $('#navStats').classList.toggle('on', state.view.type === 'stats');
+  $('#navExt').classList.toggle('on', state.view.type === 'extensions');
   $('#backBtn').disabled = state.hpos <= 0;
   $('#fwdBtn').disabled = state.hpos >= state.hist.length - 1;
 }
@@ -342,6 +348,7 @@ function renderCrumbs() {
   } else if (v.type === 'media') el.innerHTML = `<span class="crumb-plain">${t('Медиа')}</span>`;
   else if (v.type === 'stats') el.innerHTML = `<span class="crumb-plain">${t('Статистика')}</span>`;
   else if (v.type === 'changelog') el.innerHTML = `<span class="crumb-plain">${t('Что нового')}</span>`;
+  else if (v.type === 'extensions') el.innerHTML = `<span class="crumb-plain">${t('Расширения')}</span>`;
 }
 
 function renderChat(scrollBottom) {
@@ -1691,6 +1698,7 @@ async function renderPage() {
       <div class="md changelog">${md ? DOMPurify.sanitize(marked.parse(md.replace(/^# .*\n/, ''))) : `<p class="dim">${t('Список изменений не найден.')}</p>`}</div></div>`;
     return;
   }
+  if (v.type === 'extensions') return Extensions.render(el);
   if (v.type === 'media') {
     const items = await api.media();
     el.innerHTML = `<div class="page-inner">
@@ -2509,6 +2517,7 @@ function bindUI() {
     $('#settingsEmpty').classList.toggle('hidden', !!first);
     if (first && $(`#settingsNav [data-stab="${stab}"]`).classList.contains('filtered')) { stab = first.dataset.stab; renderSettings(); }
   });
+  $('#navExt').addEventListener('click', () => go({ type: 'extensions' }));
   $('#backBtn').addEventListener('click', () => histStep(-1));
   $('#fwdBtn').addEventListener('click', () => histStep(1));
   $('#searchInput').addEventListener('input', (e) => { state.search = e.target.value; renderSidebar(); });

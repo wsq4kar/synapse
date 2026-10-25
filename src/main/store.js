@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS = {
   net: { mode: 'http', http: '127.0.0.1:10801', strict: true }, // как нейросети выходят в интернет: system | http | ssh
   tunnel: { enabled: false, host: '', user: 'root', port: 22, key: '' }, // Gemini через SSH-сервер
   modelsPicked2: false,
+  extSaved: {},                    // описания MCP-серверов, выключенных у всех агентов
   team: false,                     // режим «Команда»: Claude Code раздаёт части задачи субагентам
   // Арена: большие модели планируют, спорят, пишут свои варианты и голосуют за лучший
   arena: { on: false, auto: true, rounds: 3, maxBig: 3, roster: [], dispatcher: null },

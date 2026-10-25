@@ -17,6 +17,7 @@ const netproxy = require('./netproxy');
 const firewall = require('./firewall');
 const codexLimits = require('./codexlimits');
 const arena = require('./arena');
+const ext = require('./extensions');
 const i18n = require('./i18n');
 const { t } = i18n;
 
@@ -319,6 +320,7 @@ ipcMain.handle('shell:open', (_e, p) => {
   if (fs.statSync(p).isDirectory() || inMedia) { shell.openPath(p); return true; }
   shell.showItemInFolder(p); return true;
 });
+ipcMain.handle('shell:url', (_e, u) => { if (typeof u === 'string' && /^https:\/\/[^\s]+$/i.test(u)) shell.openExternal(u); return true; });
 ipcMain.handle('shell:reveal', (_e, p) => { if (typeof p === 'string' && fs.existsSync(p)) shell.showItemInFolder(p); });
 ipcMain.handle('file:saveAs', async (_e, p) => {
   if (typeof p !== 'string' || !path.resolve(p).startsWith(path.resolve(store.dirs().media)) || !fs.existsSync(p)) return false;
@@ -586,6 +588,85 @@ ipcMain.handle('arena:roster', async () => {
 ipcMain.handle('arena:apply', (_e, { runId, pid, force } = {}) => arena.apply(arenaRoot(), runId, pid, !!force));
 ipcMain.handle('arena:files', (_e, { runId, pid } = {}) => arena.variantFiles(arenaRoot(), runId, pid));
 ipcMain.handle('arena:open', (_e, { runId, pid } = {}) => { const d = arena.variantDir(arenaRoot(), runId, pid); if (d && fs.existsSync(d)) shell.openPath(d); return !!d; });
+
+// ---------- Расширения: MCP, коннекторы, скиллы, плагины, маркетплейсы ----------
+async function extCtx() {
+  const settings = store.getSettings();
+  let env = {};
+  try { env = (await netproxy.agentEnv()) || {}; } catch { /* прокси выключен — команды без сети всё равно работают */ }
+  return { bin: (id) => cli.binFor(id, settings.cliPaths), env, fetch: (u, i) => netproxy.fetch(u, i) };
+}
+const mcpSaved = () => store.getSettings().extSaved || {};
+function rememberSpec(name, spec) { const all = { ...mcpSaved(), [name]: spec }; store.setSettings({ extSaved: all }); }
+function forgetSpec(name) { const all = { ...mcpSaved() }; delete all[name]; store.setSettings({ extSaved: null }); store.setSettings({ extSaved: all }); }
+async function installedAgents() {
+  const settings = store.getSettings();
+  const agents = cliCache || (cliCache = await cli.detect(settings.cliPaths));
+  return agents.map(a => ({ id: a.id, label: a.label, installed: a.installed }));
+}
+ipcMain.handle('ext:mcp:list', async () => ({ ...ext.listMcp(mcpSaved()), agents: await installedAgents() }));
+ipcMain.handle('ext:mcp:add', async (_e, { name, spec, agents }) => {
+  const ctx = await extCtx();
+  const results = {};
+  for (const a of agents || []) {
+    try { await ext.addMcp(a, name, spec, ctx); results[a] = { ok: true }; } catch (e) { results[a] = { ok: false, error: e.message }; }
+  }
+  if (Object.values(results).some(r => r.ok)) rememberSpec(name, spec);
+  return results;
+});
+ipcMain.handle('ext:mcp:toggle', async (_e, { name, agent, on, spec }) => {
+  const ctx = await extCtx();
+  if (on) {
+    const s = spec || mcpSaved()[name];
+    if (!s) throw new Error(t('Нет описания сервера «{n}»', { n: name }));
+    await ext.addMcp(agent, name, s, ctx);
+  } else {
+    if (spec) rememberSpec(name, spec);
+    await ext.removeMcp(agent, name, ctx);
+  }
+  return true;
+});
+ipcMain.handle('ext:mcp:remove', async (_e, { name, agents }) => {
+  const ctx = await extCtx();
+  const errors = [];
+  for (const a of agents || []) { try { await ext.removeMcp(a, name, ctx); } catch (e) { errors.push(`${cli.LABELS[a] || a}: ${e.message}`); } }
+  forgetSpec(name);
+  if (errors.length) throw new Error(errors.join('\n'));
+  return true;
+});
+ipcMain.handle('ext:mcp:login', async (_e, { name, agent }) => { ext.loginMcp(agent, name, await extCtx()); return true; });
+ipcMain.handle('ext:mcp:test', async (_e, spec) => ext.testMcp(spec, await extCtx()));
+ipcMain.handle('ext:connectors', () => ext.CONNECTORS);
+ipcMain.handle('ext:registry', async (_e, { query, cursor } = {}) => ext.searchRegistry(String(query || '').slice(0, 100), cursor || null, await extCtx()));
+ipcMain.handle('ext:registry:spec', (_e, { item, choice }) => ext.specFromRegistry(item, choice));
+ipcMain.handle('ext:skills:list', (_e, { cwd } = {}) => ({ skills: ext.listSkills(cwd || null), roots: ext.SKILL_ROOTS().map(r => ({ id: r.id, label: r.label, seenBy: r.seenBy })) }));
+ipcMain.handle('ext:skills:read', (_e, { dir, cwd }) => ext.readSkill(dir, cwd || null));
+ipcMain.handle('ext:skills:save', (_e, data) => ext.saveSkill(data));
+ipcMain.handle('ext:skills:remove', (_e, { dir, cwd }) => { ext.removeSkill(dir, cwd || null); return true; });
+ipcMain.handle('ext:skills:copy', (_e, { dir, root, cwd }) => ext.copySkill(dir, root, cwd || null));
+ipcMain.handle('ext:skills:import', async (_e, { roots, cwd }) => {
+  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: t('Папка скилла (с файлом SKILL.md)') });
+  if (r.canceled || !r.filePaths[0]) return null;
+  return ext.importSkill(r.filePaths[0], roots || ['claude'], cwd || null);
+});
+ipcMain.handle('ext:plugins', async () => {
+  const ctx = await extCtx();
+  const agents = await installedAgents();
+  const has = (id) => agents.some(a => a.id === id && a.installed);
+  return {
+    claude: has('claude') ? await ext.claudePlugins(ctx) : { ok: false, error: t('Claude Code не установлен') },
+    codex: ext.codexPlugins(), gemini: ext.geminiExtensions(), markets: ext.MARKETS, agents,
+  };
+});
+ipcMain.handle('ext:plugin', async (_e, { action, id, accept }) => {
+  if (!['install', 'uninstall', 'enable', 'disable', 'update'].includes(action)) throw new Error('bad action');
+  return ext.claudePluginAction(action, id, await extCtx(), { accept });
+});
+ipcMain.handle('ext:market', async (_e, { action, arg }) => {
+  if (!['add', 'remove', 'update'].includes(action)) throw new Error('bad action');
+  return ext.claudeMarketplace(action, arg, await extCtx());
+});
+ipcMain.handle('ext:codexPlugin', (_e, { id, enabled }) => { ext.codexPluginToggle(id, !!enabled); return true; });
 
 async function runCode(taskId, input, settings, text, images, signal, log) {
   const detected = cliCache || (cliCache = await cli.detect(settings.cliPaths));
