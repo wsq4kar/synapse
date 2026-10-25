@@ -1,10 +1,16 @@
 name: Release
 
 # Сборка установщика Windows. По тегу vX.Y.Z — публикуется релиз с установщиком.
+# Ручной запуск (workflow_dispatch) с полем «tag» тоже публикует релиз: тег создаётся на выбранном коммите.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Тег релиза, например v0.4.0 (пусто — только собрать установщик)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -12,6 +18,8 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name || '') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -35,9 +43,25 @@ jobs:
           path: dist/Synapse-Setup-*.exe
           if-no-files-found: error
 
+      # Описание релиза — раздел этой версии из CHANGELOG.md
+      - name: Release notes
+        if: env.RELEASE_TAG != ''
+        shell: bash
+        run: |
+          node -e "
+            const v = process.env.RELEASE_TAG.replace(/^v/, '');
+            const md = require('fs').readFileSync('CHANGELOG.md', 'utf8');
+            const m = md.split(/^## /m).find(s => s.startsWith(v + '\n') || s.startsWith(v + '\r'));
+            require('fs').writeFileSync('notes.md', m ? m.slice(m.indexOf('\n') + 1).trim() + '\n' : '');
+          "
+
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Synapse ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          body_path: notes.md
           files: dist/Synapse-Setup-*.exe
           generate_release_notes: true
