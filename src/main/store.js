@@ -42,6 +42,7 @@ const DEFAULT_SETTINGS = {
   cliModels: { claude: '', codex: '', antigravity: '', opencode: '' },
   sidebarCollapsed: false,
   lang: '',
+  displayName: '',                 // имя в приложении; пусто — имя пользователя Windows
 };
 
 let root;

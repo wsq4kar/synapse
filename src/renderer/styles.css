@@ -1095,3 +1095,7 @@ details[open] > :not(summary) { animation: arIn .35s var(--spring) both; }
 .modal-nav .nav-group { font-size: 11px; color: var(--muted); padding: 10px 10px 4px; }
 .modal-nav button.filtered { display: none; }
 .s-empty { font-size: 12px; color: var(--muted); padding: 8px 10px; }
+.profile .name-edit { margin-top: 2px; opacity: .75; transition: opacity .15s, transform .3s var(--spring); }
+.profile .name-edit:hover { opacity: 1; }
+.profile .name-edit:active { transform: scale(.95); }
+.profile h1 .name-input { width: 280px; text-align: center; font: 700 20px var(--font-round); height: 40px; animation: pop .35s var(--spring) both; }

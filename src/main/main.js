@@ -176,7 +176,8 @@ ipcMain.handle('term:kill', (_e, termId) => { ws.termKill(termId); return true; 
 const send = (taskId, ev) => { if (win && !win.isDestroyed()) win.webContents.send('task:event', { taskId, ...ev }); };
 
 const fullSettings = () => ({ ...store.getSettings(), lang: i18n.lang(), hasKey: !!store.getGeminiKey(), hasOrKey: !!store.getOpenRouterKey(),
-  catalog: catalog.get(), platform: process.platform, version: app.getVersion(), user: safeUser() });
+  catalog: catalog.get(), platform: process.platform, version: app.getVersion(),
+  user: String(store.getSettings().displayName || '').trim().slice(0, 40) || safeUser(), osUser: safeUser() });
 ipcMain.handle('settings:get', fullSettings);
 function safeUser() { try { return os.userInfo().username; } catch { return 'user'; } }
 ipcMain.handle('settings:set', (_e, patch) => {

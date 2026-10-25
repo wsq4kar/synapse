@@ -14,6 +14,8 @@
 - **Stats** (account menu or sidebar): tokens all time, most tokens in a day, longest task, streaks, a token activity heatmap (by day, by week, cumulative), executors and favorite models, most used reasoning level.
 - **Account menu** like in Claude: settings, stats, language, agents and models, API keys, what's new, help.
 - Settings: search, grouped sections, «API keys» tab with Gemini and OpenRouter.
+- **Your name**: change it on the stats page («Edit»), from the account menu or in Settings → Appearance. By default it's your Windows user name.
+- The Windows installer build on GitHub works again (PowerShell broke an electron-builder flag, so 0.2.0 and 0.3.0 had no installer).
 - Fixes: «Stopped» and «blocked by filter» messages from Gemini were never shown (a variable hid the translation function); pages opened scrolled to where the previous page was.
 
 ## 0.2.0

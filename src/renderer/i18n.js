@@ -289,6 +289,8 @@
     'раз': 'times', 'раза': 'times', 'Не используется': 'Not used', 'Запусков Арены': 'Arena runs', 'Активных дней': 'Active days',
     'Стоимость по прайсу API': 'Cost at API list prices',
     'Считается на этом компьютере по ответам агентов и API. По подписке вы платите фиксированно — прайс показан для сравнения.': 'Counted on this computer from agent and API responses. With a subscription you pay a flat fee — list price is shown for comparison.',
+    'Изменить': 'Edit', 'Изменить имя': 'Change name', 'Имя сохранено': 'Name saved', 'Ваше имя': 'Your name',
+    'Показывается в панели слева и на странице статистики. Пусто — имя пользователя Windows.': 'Shown in the sidebar and on the stats page. Empty — your Windows user name.',
     'Агенты и модели': 'Agents and models', 'Справка и ошибки': 'Help and bug reports', 'решил маршрутизатор': 'decided by the router',
 };
 

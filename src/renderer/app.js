@@ -111,8 +111,7 @@ async function init() {
   applyLook();
   if (state.settings.sidebarCollapsed) $('#app').classList.add('side-collapsed');
   $('#main').classList.toggle('show-progress', !!state.settings.progressPanel);
-  $('#accName').textContent = state.settings.user || 'user';
-  $('#avatar').textContent = (state.settings.user || 'S')[0].toUpperCase();
+  renderAccount();
 
   ascii = new AsciiField($('#ascii'));
   ascii.setUltra(!!state.settings.ultra);
@@ -1783,6 +1782,7 @@ async function renderStats(el) {
     <div class="profile">
       <span class="avatar xl">${esc(name.slice(0, 1).toUpperCase())}</span>
       <h1>${esc(name)}</h1>
+      <button class="btn sm name-edit" id="nameEdit">${icon('pencil')}${t('Изменить')}</button>
       <span class="dim">${st.first ? t('С нами с {d}', { d: new Date(st.first).toLocaleDateString(I18N.locale, { day: 'numeric', month: 'long', year: 'numeric' }) }) : t('Здесь появится ваша статистика')}</span>
     </div>
     <div class="stat-strip">${cells.map(([v, l], i) => `<div class="ss-cell" style="--i:${i}"><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join('')}</div>
@@ -1823,6 +1823,37 @@ async function renderStats(el) {
     </section>
   </div>`;
   el.querySelectorAll('[data-stats-mode]').forEach(b => b.addEventListener('click', () => { statsMode = b.dataset.statsMode; renderStats(el); }));
+  el.querySelector('#nameEdit')?.addEventListener('click', editNameInline);
+  el.querySelector('.profile h1')?.addEventListener('dblclick', editNameInline);
+}
+
+/* ================= Имя пользователя ================= */
+function renderAccount() {
+  $('#accName').textContent = state.settings.user || 'user';
+  $('#avatar').textContent = (state.settings.user || 'S')[0].toUpperCase();
+}
+async function saveName(v) {
+  v = String(v || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+  await saveSettings({ displayName: v === state.settings.osUser ? '' : v });
+  renderAccount();
+  toast(t('Имя сохранено'));
+}
+// Редактирование имени прямо на странице статистики
+function editNameInline() {
+  const h = $('.profile h1');
+  if (!h || h.querySelector('input')) return;
+  const cur = state.settings.user || '';
+  h.innerHTML = `<input class="input name-input" maxlength="40" value="${esc(cur)}" placeholder="${esc(state.settings.osUser || '')}" spellcheck="false">`;
+  const inp = h.querySelector('input');
+  inp.focus(); inp.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return; done = true;
+    if (save && inp.value.trim() !== cur) await saveName(inp.value);
+    if (state.view.type === 'stats') renderStats($('#viewPage'));
+  };
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') finish(true); if (e.key === 'Escape') { e.stopPropagation(); finish(false); } });
+  inp.addEventListener('blur', () => finish(true));
 }
 
 /* ================= Меню аккаунта ================= */
@@ -1833,6 +1864,7 @@ function accountMenu() {
     { label: s.user || 'user' },
     { icon: 'settings', text: t('Настройки'), hint: 'Ctrl ,', check: false, act: () => openSettings() },
     { icon: 'chart', text: t('Статистика'), check: false, act: () => go({ type: 'stats' }) },
+    { icon: 'pencil', text: t('Изменить имя'), check: false, act: async () => { if (state.view.type !== 'stats') go({ type: 'stats' }); setTimeout(editNameInline, 350); } },
     { icon: 'globe', text: t('Язык'), hint: I18N.lang === 'en' ? 'English' : 'Русский', check: false, act: () => languageMenu() },
     '-',
     { icon: 'bot', text: t('Агенты и модели'), check: false, act: () => openSettings('agents') },
@@ -2048,6 +2080,9 @@ async function renderSettings() {
   }
   if (stab === 'look') {
     html = `<h2>${t('Внешний вид')}</h2><p class="lead">${t('Тема, шрифт, цвета и поведение.')}</p>
+      <div class="field"><label>${t('Ваше имя')}</label>
+        <input class="input" id="nameInput" maxlength="40" value="${esc(s.displayName || '')}" placeholder="${esc(s.osUser || '')}" spellcheck="false">
+        <div class="hint">${t('Показывается в панели слева и на странице статистики. Пусто — имя пользователя Windows.')}</div></div>
       <div class="field"><span class="field-label">${t('Язык')}</span><div class="seg">
         <button data-lang="ru" class="${I18N.lang === 'ru' ? 'on' : ''}">Русский</button>
         <button data-lang="en" class="${I18N.lang === 'en' ? 'on' : ''}">English</button></div></div>
@@ -2347,6 +2382,7 @@ function bindSettings(body) {
   all('[data-look-k]', b => b.addEventListener('click', () => setLook({ [b.dataset.lookK]: b.dataset.lookV })));
   all('[data-look-toggle]', b => b.addEventListener('click', () => setLook({ [b.dataset.lookToggle]: look()[b.dataset.lookToggle] === false })));
   all('[data-theme]', b => b.addEventListener('click', async () => { await saveSettings({ theme: b.dataset.theme }); applyTheme(b.dataset.theme); renderSettings(); }));
+  on('#nameInput', 'change', (e) => saveName(e.target.value || state.settings.osUser));
   all('[data-lang]', b => b.addEventListener('click', async () => {
     if (b.dataset.lang === I18N.lang) return;
     await saveSettings({ lang: b.dataset.lang });
