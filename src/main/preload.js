@@ -6,6 +6,9 @@ contextBridge.exposeInMainWorld('synapse', {
   settings: { get: invoke('settings:get'), set: invoke('settings:set') },
   key: { set: invoke('key:set'), test: invoke('key:test') },
   models: { list: invoke('models:list') },
+  orKey: { set: invoke('orkey:set'), test: invoke('orkey:test') },
+  orModels: invoke('ormodels:list'),
+  catalog: { refresh: invoke('catalog:refresh'), onChanged: (fn) => ipcRenderer.on('catalog:changed', () => fn()) },
   cli: { detect: invoke('cli:detect'), login: invoke('cli:login') },
   chats: { list: invoke('chats:list'), get: invoke('chats:get'), save: invoke('chats:save'), remove: invoke('chats:delete') },
   task: {
@@ -44,4 +47,6 @@ contextBridge.exposeInMainWorld('synapse', {
   reveal: invoke('shell:reveal'),
   saveAs: invoke('file:saveAs'),
   usage: invoke('usage:read'),
+  stats: invoke('stats:get'),
+  changelog: invoke('changelog:get'),
 });

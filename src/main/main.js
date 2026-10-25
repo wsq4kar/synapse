@@ -7,6 +7,9 @@ const { pathToFileURL } = require('url');
 const store = require('./store');
 const router = require('./router');
 const gemini = require('./executors/gemini');
+const openrouter = require('./executors/openrouter');
+const catalog = require('./catalog');
+const tokens = require('./tokens');
 const cli = require('./executors/cli');
 const ws = require('./workspace');
 const tunnel = require('./tunnel');
@@ -117,9 +120,14 @@ app.whenReady().then(() => {
     return net.fetch(pathToFileURL(p).toString());
   });
   protocol.handle('wsfile', (req) => ws.handleProtocol(req, net.fetch, pathToFileURL));
+  catalog.init(store.dirs().root);
+  // точка отсчёта статистики: всё раньше берётся из сохранённых чатов
+  if (!store.getSettings().statsSince) store.setSettings({ statsSince: Date.now() });
   createWindow();
   tunnel.onStatus((st) => { if (win && !win.isDestroyed()) win.webContents.send('tunnel:status', { ...st, enabled: !!store.getSettings().tunnel?.enabled }); });
-  netproxy.configure(store.getSettings().net, store.getSettings().tunnel).catch(() => {});
+  netproxy.configure(store.getSettings().net, store.getSettings().tunnel).catch(() => {})
+    // свежий список моделей с GitHub — когда сеть уже настроена
+    .finally(() => catalog.refresh().then(() => { if (win && !win.isDestroyed()) win.webContents.send('catalog:changed'); }).catch(() => {}));
   // Google не пускает из региона → один раз сам включаем SSH-туннель, если сервер и ключ уже указаны
   tunnel.setRescue(async () => {
     const s0 = store.getSettings();
@@ -167,7 +175,8 @@ ipcMain.handle('term:kill', (_e, termId) => { ws.termKill(termId); return true; 
 // ---------------- IPC ----------------
 const send = (taskId, ev) => { if (win && !win.isDestroyed()) win.webContents.send('task:event', { taskId, ...ev }); };
 
-const fullSettings = () => ({ ...store.getSettings(), lang: i18n.lang(), hasKey: !!store.getGeminiKey(), platform: process.platform, version: app.getVersion(), user: safeUser() });
+const fullSettings = () => ({ ...store.getSettings(), lang: i18n.lang(), hasKey: !!store.getGeminiKey(), hasOrKey: !!store.getOpenRouterKey(),
+  catalog: catalog.get(), platform: process.platform, version: app.getVersion(), user: safeUser() });
 ipcMain.handle('settings:get', fullSettings);
 function safeUser() { try { return os.userInfo().username; } catch { return 'user'; } }
 ipcMain.handle('settings:set', (_e, patch) => {
@@ -188,6 +197,14 @@ ipcMain.handle('key:test', async () => {
   return { ok: true, count: models.length };
 });
 ipcMain.handle('models:list', async () => { const list = await gemini.listModels(store.getGeminiKey()); autoPickModels(list, true); return list; });
+// OpenRouter: ключ, проверка, список моделей
+ipcMain.handle('orkey:set', (_e, key) => { store.setOpenRouterKey(key); return !!store.getOpenRouterKey(); });
+ipcMain.handle('orkey:test', async () => {
+  const k = await openrouter.keyInfo(store.getOpenRouterKey());
+  return { ok: true, label: k.label || null, usage: k.usage ?? null, limit: k.limit ?? null, free: !!k.is_free_tier };
+});
+ipcMain.handle('ormodels:list', () => openrouter.listModels(store.getOpenRouterKey()));
+ipcMain.handle('catalog:refresh', async () => { await catalog.refresh(true); return catalog.get(); });
 
 // Если выбранная модель недоступна по ключу — подбираем самую новую подходящую
 const PICK = {
@@ -310,6 +327,9 @@ ipcMain.handle('file:saveAs', async (_e, p) => {
   return true;
 });
 ipcMain.handle('usage:read', () => store.readUsage());
+ipcMain.handle('stats:get', () => store.usageStats());
+// «Что нового»: CHANGELOG.md из папки приложения
+ipcMain.handle('changelog:get', () => { try { return fs.readFileSync(path.join(__dirname, '../../CHANGELOG.md'), 'utf8'); } catch { return ''; } });
 ipcMain.handle('task:cancel', (_e, taskId) => { tasks.get(taskId)?.abort(); return true; });
 ipcMain.handle('task:run', (_e, input) => {
   const taskId = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -336,24 +356,33 @@ async function runTask(taskId, input, signal) {
   // Арена: несколько больших моделей вместе (только во вкладке «Код»)
   if (input.arena && input.mode === 'code') {
     send(taskId, { kind: 'route', route: 'code', reason: t('Арена') });
-    const log = (extra) => store.logUsage({ route: 'code', ms: Date.now() - started, chars: text.length, arena: true, ...extra });
+    const log = (extra) => store.logUsage({ route: 'code', ms: Date.now() - started, chars: text.length, arena: true, ultra: !!input.ultra, ...extra });
     return runArena(taskId, input, settings, text, images, signal, log);
   }
   // Агент выбран вручную в меню модели — задача уходит ему (кроме явных «Изображение»/«Видео»)
   const forced = input.executor && cli.LABELS[input.executor] && !['image', 'video'].includes(input.mode)
     ? { route: 'code', reason: t('выбрано вручную') } : null;
+  const orKey = store.getOpenRouterKey();
+  const orCfg = orSettings(settings);
+  // Маршрутизатор: Gemini по ключу, без него — дешёвая модель OpenRouter
+  const askModel = !settings.smartRouting ? null
+    : key ? (q, context) => gemini.classify({ key, model: settings.models.router, text: q, prompt: router.ROUTER_PROMPT, context, signal })
+    : orKey ? (q, context) => openrouter.classify({ key: orKey, model: orCfg.router, text: q, prompt: router.ROUTER_PROMPT, context, signal })
+    : null;
   const decided = forced || await router.route({
-    text, mode: input.mode, hasFolder: !!input.cwd, hasImages: images.length > 0, lastRoute: input.lastRoute,
-    askModel: settings.smartRouting && key
-      ? (t, context) => gemini.classify({ key, model: settings.models.router, text: t, prompt: router.ROUTER_PROMPT, context, signal })
-      : null,
+    text, mode: input.mode, hasFolder: !!input.cwd, hasImages: images.length > 0, lastRoute: input.lastRoute, askModel,
   });
   send(taskId, { kind: 'route', route: decided.route, reason: decided.reason });
 
-  const log = (extra) => store.logUsage({ route: decided.route, ms: Date.now() - started, chars: text.length, ...extra });
+  const log = (extra) => store.logUsage({ route: decided.route, ms: Date.now() - started, chars: text.length, effort: cli.effortOf(input.effort || settings.effort, input.ultra) || 'auto', ultra: !!input.ultra, ...extra });
 
   try {
-    // Без ключа Gemini разговор ведёт Claude Code / Codex — подписки хватает
+    // Чат через OpenRouter: выбрана его модель или нет ключа Gemini
+    const orPicked = /^or:/.test(input.chatModel || '') ? input.chatModel.slice(3) : null;
+    if (decided.route === 'chat' && orKey && (orPicked || !key)) {
+      return await runOpenRouterChat(taskId, input, settings, orKey, orPicked, text, images, signal, log);
+    }
+    // Без ключей разговор ведёт Claude Code / Codex — подписки хватает
     if (decided.route === 'chat' && !key) {
       send(taskId, { kind: 'route', route: 'code', reason: t('нет ключа Gemini — отвечает агент') });
       return await runCode(taskId, input, settings, text, images, signal, log);
@@ -383,19 +412,27 @@ async function runTask(taskId, input, signal) {
         send(taskId, { kind: 'fallback', from: 'Gemini', to: t('агент'), reason: t('Gemini недоступен'), error: e.message, action: 'network' });
         return await runCode(taskId, input, settings, text, images, signal, log);
       }
-      log({ executor: 'gemini', model, ok: true, tokens: r.usage?.totalTokenCount });
       const gu = geminiUsage(r.usage, model);
+      log({ executor: 'gemini', model, ok: true, usage: gu });
       const window = await geminiWindow(key, model);
       const context = r.usage ? { used: (r.usage.promptTokenCount || 0) + (r.usage.candidatesTokenCount || 0) + (r.usage.thoughtsTokenCount || 0), window } : null;
       if (context) send(taskId, { kind: 'context', ...context, model });
       return send(taskId, { kind: 'done', text: r.text, executor: 'gemini', usage: gu, context });
     }
 
+    if (decided.route === 'image' && !key && orKey) {
+      const model = orCfg.image;
+      send(taskId, { kind: 'executor', executor: 'openrouter', label: `${t('Изображение')} · ${model}` });
+      send(taskId, { kind: 'status', status: 'generating' });
+      const r = await openrouter.image({ key: orKey, model, text, images, outDir: store.mediaDir(input.chatId), signal });
+      log({ executor: 'openrouter', model, ok: true, files: r.files.length, usage: openrouter.toUsage(r.usage, model) });
+      return send(taskId, { kind: 'done', text: r.text, files: r.files.map(toMedia), executor: 'openrouter', usage: openrouter.toUsage(r.usage, model) });
+    }
     if (decided.route === 'image') {
       send(taskId, { kind: 'executor', executor: 'gemini', label: `${t('Изображение')} · ${settings.models.image}` });
       send(taskId, { kind: 'status', status: 'generating' });
       const r = await withModelFallback('image', key, settings.models.image, (mdl) => gemini.image({ key, model: mdl, text, images, outDir: store.mediaDir(input.chatId), signal }));
-      log({ executor: 'gemini', model: settings.models.image, ok: true, files: r.files.length });
+      log({ executor: 'gemini', model: settings.models.image, ok: true, files: r.files.length, usage: geminiUsage(r.usage, settings.models.image) });
       return send(taskId, { kind: 'done', text: r.text, files: r.files.map(toMedia), executor: 'gemini', usage: geminiUsage(r.usage, settings.models.image) });
     }
 
@@ -417,6 +454,43 @@ async function runTask(taskId, input, signal) {
     log({ ok: false, error: String(e.message).slice(0, 200) });
     throw e;
   }
+}
+
+// ---------- OpenRouter ----------
+// Модели OpenRouter: выбор пользователя в настройках → models.json
+function orSettings(settings) {
+  const def = catalog.get().openrouter || {};
+  const own = settings.openrouter || {};
+  const ok = (m) => openrouter.MODEL_RE.test(m || '');
+  return {
+    chat: ok(own.chat) ? own.chat : def.chat, chatUltra: ok(own.chatUltra) ? own.chatUltra : def.chatUltra,
+    router: ok(own.router) ? own.router : def.router, image: ok(own.image) ? own.image : def.image,
+  };
+}
+async function runOpenRouterChat(taskId, input, settings, orKey, picked, text, images, signal, log) {
+  const cfg = orSettings(settings);
+  const model = picked && openrouter.MODEL_RE.test(picked) ? picked : (input.ultra ? cfg.chatUltra : cfg.chat);
+  send(taskId, { kind: 'executor', executor: 'openrouter', label: `OpenRouter · ${model}` });
+  let thoughts = '';
+  let r;
+  try {
+    r = await openrouter.chatStream({
+      key: orKey, model, history: input.history || [], text, images, signal, memory: memoryText(settings),
+      effort: cli.effortOf(input.effort || settings.effort, input.ultra),
+      onDelta: (d) => send(taskId, { kind: 'delta', text: d }),
+      onThought: (d) => { thoughts += d; send(taskId, { kind: 'thinking', text: thoughts }); },
+    });
+  } catch (e) {
+    if (e.code !== 'network') throw e;
+    send(taskId, { kind: 'fallback', from: 'OpenRouter', to: t('агент'), reason: t('OpenRouter недоступен'), error: e.message, action: 'network' });
+    return await runCode(taskId, input, settings, text, images, signal, log);
+  }
+  const usage = openrouter.toUsage(r.usage, r.model);
+  log({ executor: 'openrouter', model: r.model, ok: true, usage });
+  const window = (await openrouter.listModels(orKey).catch(() => [])).find(m => m.id === model)?.context || null;
+  const context = r.usage ? { used: (r.usage.prompt_tokens || 0) + (r.usage.completion_tokens || 0), window } : null;
+  if (context) send(taskId, { kind: 'context', ...context, model: r.model });
+  return send(taskId, { kind: 'done', text: r.text, executor: 'openrouter', usage, context });
 }
 
 // ---------- Память «Обо мне» ----------
@@ -488,14 +562,15 @@ async function runArena(taskId, input, settings, text, images, signal, log) {
     });
     note = `\n\n${t('Приложенные изображения:')}\n${saved.map(s => `- ${s}`).join('\n')}`;
   }
-  const extraEnv = await netproxy.agentEnv();
+  const extraEnv = { ...(await netproxy.agentEnv() || {}) };
+  if (store.getOpenRouterKey()) extraEnv.OPENROUTER_API_KEY = store.getOpenRouterKey();
   const hist = (input.history || []).filter(m => m.text).slice(-6).map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text.slice(0, 1200)}`).join('\n');
   try {
     const r = await arena.run({
       input, settings, agents, text: text + note, history: hist, memory: memoryText(settings),
       cwd, root: arenaRoot(), extraEnv, signal, emit: (ev) => send(taskId, ev),
     });
-    log({ executor: 'arena', ok: true, model: r.winner.model });
+    log({ executor: 'arena', ok: true, model: r.winner.model, usage: r.usage });
     return send(taskId, { kind: 'done', text: r.text, executor: 'arena', cwd, usage: { ...r.usage, model: t('Арена') } });
   } catch (e) {
     log({ executor: 'arena', ok: false, error: String(e.message).slice(0, 200) });
@@ -518,7 +593,7 @@ async function runCode(taskId, input, settings, text, images, signal, log) {
     .filter((v, i, a) => a.indexOf(v) === i && cli.LABELS[v]);
   const queue = order.filter(id => installed.has(id));
   if (!queue.length) {
-    throw new Error(t('Не найден ни один CLI-агент. Установите Claude Code, Codex, Gemini CLI или OpenCode и войдите в аккаунт, затем нажмите «Проверить» в настройках.'));
+    throw new Error(t('Не найден ни один CLI-агент. Установите Claude Code, Codex, Antigravity или OpenCode и войдите в аккаунт, затем нажмите «Проверить» в настройках.'));
   }
 
   const cwd = input.cwd || path.join(settings.workspaceRoot, `chat-${String(input.chatId).slice(0, 8)}`);
@@ -539,33 +614,45 @@ async function runCode(taskId, input, settings, text, images, signal, log) {
   }
 
   // Сеть для агентов: в строгом режиме без прокси задача не запускается вовсе
-  const extraEnv = await netproxy.agentEnv();
+  const extraEnv = { ...(await netproxy.agentEnv() || {}) };
+  // OpenCode с моделями openrouter/… — ключ из настроек Synapse (другие агенты его не получают)
+  const orKey = store.getOpenRouterKey();
+  if (orKey) extraEnv.OPENROUTER_API_KEY = orKey;
+  const sessions = sessionsOf(input);
   let lastErr = null;
   for (let i = 0; i < queue.length; i++) {
     const id = queue[i];
-    const resume = id === 'claude' ? input.claudeSession : id === 'opencode' ? input.opencodeSession : null;
-    const prompt = (resume ? '' : historyContext(input.history)) + text + attachNote;
+    // своя сессия агента: история и кэш уже у него — пересылаем только новое сообщение
+    let resume = cli.RESUMABLE.has(id) ? sessions[id] || null : null;
     const am = id === input.executor && input.agentModel ? input.agentModel : null;
     send(taskId, { kind: 'executor', executor: id, label: am ? `${cli.LABELS[id]} · ${am}` : cli.LABELS[id] });
     send(taskId, { kind: 'status', status: 'working' });
 
     const mem = memoryText(settings);
     const env = settings.claudeEnv || {};
-    const r = await cli.run({
+    const go = (sessionId) => cli.run({
       id, bin: cli.binFor(id, settings.cliPaths), cwd, access: settings.agentAccess,
-      // Claude получает «Обо мне» системным промптом, остальные агенты — в начале задачи
-      prompt: (id !== 'claude' && mem && !resume ? `${t('Контекст о пользователе (из Synapse):')}\n${mem}\n\n---\n\n` : '') + prompt,
+      // Claude получает «Обо мне» системным промптом, остальные агенты — в начале новой сессии
+      prompt: (id !== 'claude' && mem && !sessionId ? `${t('Контекст о пользователе (из Synapse):')}\n${mem}\n\n---\n\n` : '')
+        + (sessionId ? '' : historyContext(input.history)) + text + attachNote,
       memoryFile: id === 'claude' ? systemFileFor(mem, !!input.team) : null,
       allowTools: settings.allowConnectors !== false ? ['Skill', ...(env.mcpPrefixes || [])] : [],
-      sessionId: resume, ultra: !!input.ultra, effort: input.effort || settings.effort, model: id === input.executor ? input.agentModel : null,
+      sessionId, ultra: !!input.ultra, effort: input.effort || settings.effort, model: id === input.executor ? input.agentModel : null,
       extraEnv, signal, onEvent: (ev) => {
         if (ev.kind === 'agent-env') store.setSettings({ claudeEnv: ev });
         send(taskId, ev);
       },
     });
+    let r = await go(resume);
+    // сессия не продолжилась (удалена, другая версия CLI) — один раз начинаем заново с кратким контекстом
+    if (!r.ok && resume && !r.aborted && !r.limited && !r.netFail && !r.notInstalled) {
+      send(taskId, { kind: 'step', id: `resume-${id}`, status: 'done', title: t('Новая сессия'), tool: 'other', detail: t('Прошлую сессию продолжить не удалось — начинаю заново с кратким контекстом') });
+      resume = null;
+      r = await go(null);
+    }
 
     if (r.ok) {
-      log({ executor: id, ok: true, cost: r.cost, ultra: !!input.ultra });
+      log({ executor: id, ok: true, cost: r.cost, ultra: !!input.ultra, usage: r.usage, model: r.usage?.model || (id === input.executor ? input.agentModel : null) || null });
       return send(taskId, { kind: 'done', text: r.text, executor: id, sessionId: r.sessionId, cost: r.cost, cwd, usage: r.usage, context: r.context });
     }
     if (r.aborted) throw Object.assign(new Error(t('Остановлено')), { code: 'aborted' });
@@ -580,11 +667,20 @@ async function runCode(taskId, input, settings, text, images, signal, log) {
   throw new Error(lastErr || t('Агенты не смогли выполнить задачу'));
 }
 
+// Краткий контекст разговора для агента без своей сессии: код из ответов свёрнут, длинное сокращено
 function historyContext(history = []) {
-  const recent = history.filter(m => m.text).slice(-6);
+  const recent = tokens.agentHistory(history);
   if (!recent.length) return '';
-  const lines = recent.map(m => `${m.role === 'user' ? t('Пользователь') : t('Ассистент')}: ${m.text.slice(0, 1500)}`);
+  const lines = recent.map(m => `${m.role === 'user' ? t('Пользователь') : t('Ассистент')}: ${m.text}`);
   return `${t('Контекст предыдущего разговора:')}\n${lines.join('\n')}\n\n${t('Новая задача:')}\n`;
+}
+// Сессии агентов для этого чата (старые чаты хранили claudeSession / opencodeSession отдельно)
+function sessionsOf(input) {
+  const out = { ...(input.sessions && typeof input.sessions === 'object' ? input.sessions : {}) };
+  if (!out.claude && input.claudeSession) out.claude = input.claudeSession;
+  if (!out.opencode && input.opencodeSession) out.opencode = input.opencodeSession;
+  for (const [k, v] of Object.entries(out)) if (!cli.RESUMABLE.has(k) || typeof v !== 'string' || !/^[\w.:-]{1,200}$/.test(v)) delete out[k];
+  return out;
 }
 
 function toMedia(f) {

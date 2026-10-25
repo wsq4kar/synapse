@@ -1,5 +1,5 @@
 const { t } = require('../i18n');
-// Запуск официальных CLI-агентов (Claude Code, Codex, Gemini CLI, OpenCode) на этом компьютере.
+// Запуск официальных CLI-агентов (Claude Code, Codex, Antigravity CLI, OpenCode) на этом компьютере.
 // Приложение только ставит задачу и читает вывод — работают сами CLI под вашим входом.
 const { spawn, execFile } = require('child_process');
 const fs = require('fs');
@@ -9,7 +9,7 @@ const path = require('path');
 const IS_WIN = process.platform === 'win32';
 // Путь к CLI: буквы любых языков, цифры, пробелы, скобки — но без символов оболочки (& | < > ^ " % ! ;)
 const SAFE_ARG = /^[\p{L}\p{N}_.\-:\/\\ ()~+@]+$/u;
-const BINS = { claude: 'claude', codex: 'codex', 'gemini-cli': 'gemini', opencode: 'opencode' };
+const BINS = { claude: 'claude', codex: 'codex', antigravity: 'agy', opencode: 'opencode' };
 
 // Где обычно лежат CLI на Windows / macOS / Linux
 function candidates(id) {
@@ -23,6 +23,7 @@ function candidates(id) {
       path.join(home, `.${name}`, 'bin', `${name}.exe`),
       path.join(ad, 'npm', `${name}.cmd`),
       path.join(lad, 'Programs', name, `${name}.exe`),
+      path.join(lad, name, 'bin', `${name}.exe`), // Antigravity CLI: %LOCALAPPDATA%\agy\bin\agy.exe
       path.join(lad, 'pnpm', `${name}.cmd`),
       path.join(home, 'scoop', 'shims', `${name}.exe`),
       path.join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs', `${name}.cmd`),
@@ -71,16 +72,21 @@ function whichSync(bin) {
   } catch { return null; }
 }
 
-const LABELS = { claude: 'Claude Code', codex: 'Codex', 'gemini-cli': 'Gemini CLI', opencode: 'OpenCode' };
+const LABELS = { claude: 'Claude Code', codex: 'Codex', antigravity: 'Antigravity', opencode: 'OpenCode' };
+// Агенты, которые умеют продолжать свою сессию — им не нужно заново пересылать историю чата
+const RESUMABLE = new Set(['claude', 'codex', 'antigravity', 'opencode']);
 
 // ---------- описание запуска каждого CLI ----------
-const MODEL_ARG = /^[\w.\-:]+(\/[\w.\-:]+)?$/; // OpenCode: provider/model
+const MODEL_ARG = /^~?[\w.\-:]+(\/~?[\w.\-:]+){0,2}$/; // OpenCode: provider/model, openrouter/vendor/model
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 // Ultra = максимум; иначе — выбранный уровень (auto = настройка самого CLI)
 function effortOf(effort, ultra) { return ultra ? 'max' : (EFFORTS.includes(effort) ? effort : null); }
 const CODEX_EFFORT = { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'xhigh' };
 // OpenCode: --variant зависит от провайдера; передаём только явные «high/max»
 const OPENCODE_VARIANT = { high: 'high', xhigh: 'high', max: 'max' };
+// Antigravity: low | medium | high | max (max есть не у всех моделей — тогда флаг уберётся при повторе)
+const AGY_EFFORT = { low: 'low', medium: 'medium', high: 'high', xhigh: 'high', max: 'max' };
+const SESSION_RE = /^[\w.:-]+$/;
 
 function buildCommand(id, { access, sessionId, lastMessageFile, ultra, model, effort, memoryFile, allowTools }) {
   const m = model && MODEL_ARG.test(model) ? model : null;
@@ -106,12 +112,23 @@ function buildCommand(id, { access, sessionId, lastMessageFile, ultra, model, ef
         ...(ef ? ['-c', `model_reasoning_effort=${CODEX_EFFORT[ef]}`] : []),
         '-c', 'model_reasoning_summary=auto', // рассуждения модели в выводе
         ...(m ? ['-m', m] : []),
-        '--output-last-message', lastMessageFile, '-'];
+        '--output-last-message', lastMessageFile,
+        // продолжение прошлой сессии: история и кэш остаются у Codex, заново ничего не пересылаем
+        ...(sessionId && SESSION_RE.test(sessionId) ? ['resume', sessionId] : []),
+        '-'];
       return { args, parser: 'codex' };
     }
-    case 'gemini-cli': {
-      const args = ['--approval-mode', access === 'full' ? 'yolo' : 'auto_edit', ...(m ? ['-m', m] : [])];
-      return { args, parser: 'text' };
+    case 'antigravity': {
+      // Antigravity CLI (agy): задача приходит через stdin одним сообщением stream-json, ответ — поток событий NDJSON.
+      // Так не нужно передавать длинный текст в командной строке (cmd.exe ломает кавычки и переносы).
+      const args = ['--input-format', 'stream-json', '--output-format', 'stream-json'];
+      if (access === 'full') args.push('--dangerously-skip-permissions');
+      else args.push('--mode', 'accept-edits');
+      if (sessionId && SESSION_RE.test(sessionId)) args.push('--conversation', sessionId);
+      if (m) args.push('--model', m);
+      if (ef && AGY_EFFORT[ef]) args.push('--effort', AGY_EFFORT[ef]);
+      const stdin = (prompt) => JSON.stringify({ event: 'user', message: { content: prompt } }) + '\n';
+      return { args, parser: 'antigravity', stdin };
     }
     case 'opencode': {
       // задача приходит через stdin; --format json — поток событий; --thinking — рассуждения
@@ -131,7 +148,24 @@ const AUTH = {
   claude: { args: ['auth', 'status', '--json'], parse: (e, out) => { const j = JSON.parse(out.slice(out.indexOf('{'))); return !!j.loggedIn; } },
   codex: { args: ['login', 'status'], parse: (e, out) => (e ? (/not logged in/i.test(out) ? false : null) : !/not logged in/i.test(out)) },
 };
-const LOGIN = { claude: ['auth', 'login'], codex: ['login'], 'gemini-cli': [], opencode: ['auth', 'login'] };
+// Antigravity: «agy models» работает только после входа — заодно узнаём доступные модели
+function parseAgyModels(out) {
+  const list = [];
+  for (const line of String(out || '').split(/\r?\n/)) {
+    const m = /^\s*([a-z][\w.\-:]*\d[\w.\-:]*)(?:\s+|$)/i.exec(line);
+    if (m && /-/.test(m[1]) && !list.includes(m[1])) list.push(m[1]);
+  }
+  return list;
+}
+AUTH.antigravity = {
+  args: ['models'],
+  parse: (e, out) => {
+    if (/not (currently )?signed in|authentication required|please (log|sign) ?in|unauthenticated/i.test(out)) return false;
+    const models = parseAgyModels(out);
+    return models.length ? { loggedIn: true, models } : (e ? null : true);
+  },
+};
+const LOGIN = { claude: ['auth', 'login'], codex: ['login'], antigravity: [], opencode: ['auth', 'login'] };
 
 // Открыть системный терминал с командой входа — пользователь входит сам, в своём браузере
 function openLogin(id, paths = {}, extraEnv = null) {
@@ -157,7 +191,11 @@ function detect(paths = {}) {
       if (!ok || !AUTH[id]) return done(null);
       // Вход в аккаунт: null — CLI не умеет сообщать
       execFile(shellBin(bin), AUTH[id].args, opts, (e2, out2, err2) => {
-        try { done(AUTH[id].parse(e2, String(out2 || '') + String(err2 || ''))); } catch { done(null); }
+        try {
+          const r = AUTH[id].parse(e2, String(out2 || '') + String(err2 || ''));
+          if (r && typeof r === 'object') resolve({ ...base, installed: true, version: v.slice(0, 60), path: whichSync(bin), loggedIn: r.loggedIn, models: r.models });
+          else done(r);
+        } catch { done(null); }
       });
     });
   })));
@@ -181,9 +219,12 @@ function cleanEnv() {
 async function run(opts, drop = []) {
   const r = await runOnce(opts, drop);
   if (r.ok || r.aborted || drop.length >= 3) return r;
-  const m = /unexpected argument '(-{1,2}[\w-]+)'|unknown (?:option|flag|argument)s?[:\s'"]+(-{1,2}[\w-]+)|unrecogni[sz]ed (?:option|argument|flag)s?[:\s'"]+(-{1,2}[\w-]+)/i.exec((r.error || '') + '\n' + (r.stderr || ''));
-  const flag = m && (m[1] || m[2] || m[3]);
-  if (!flag || drop.includes(flag) || ['-', '--', '--json', '--output-last-message'].includes(flag)) return r;
+  const errText = (r.error || '') + '\n' + (r.stderr || '');
+  const m = /unexpected argument '(-{1,2}[\w-]+)'|unknown (?:option|flag|argument)s?[:\s'"]+(-{1,2}[\w-]+)|unrecogni[sz]ed (?:option|argument|flag)s?[:\s'"]+(-{1,2}[\w-]+)/i.exec(errText);
+  let flag = m && (m[1] || m[2] || m[3]);
+  // недопустимый уровень рассуждений у этой модели — запускаем без него
+  if (!flag && /invalid[^\n]{0,40}(effort|variant)|(effort|variant)[^\n]{0,40}(invalid|not supported|unsupported)/i.test(errText)) flag = /variant/i.test(errText) ? '--variant' : '--effort';
+  if (!flag || drop.includes(flag) || ['-', '--', '--json', '--output-last-message', '--input-format', '--output-format'].includes(flag)) return r;
   opts.onEvent?.({ kind: 'step', id: `drop-${flag}`, status: 'done', title: t('Совместимость'), tool: 'other', detail: t('{f} не поддерживается этой версией — запускаю без него', { f: flag }) });
   return run(opts, [...drop, flag]);
 }
@@ -194,7 +235,7 @@ function runOnce({ id, bin, prompt, cwd, access, sessionId, ultra, model, effort
     fs.mkdirSync(cwd, { recursive: true });
     const lastMessageFile = path.join(os.tmpdir(), `synapse-codex-${Date.now()}.txt`);
     const built = buildCommand(id, { access, sessionId, lastMessageFile, ultra, model, effort, memoryFile, allowTools });
-    const VALUE_FLAGS = new Set(['--sandbox', '-s', '--model', '-m', '--config', '-c', '--effort', '--permission-mode', '--approval-mode', '--ask-for-approval', '-a', '--append-system-prompt-file', '--allowedTools', '--thinking-display', '--variant', '--session', '--format']);
+    const VALUE_FLAGS = new Set(['--sandbox', '-s', '--model', '-m', '--config', '-c', '--effort', '--permission-mode', '--approval-mode', '--ask-for-approval', '-a', '--append-system-prompt-file', '--allowedTools', '--thinking-display', '--variant', '--session', '--format', '--mode', '--conversation']);
     const args = [];
     for (let i = 0; i < built.args.length; i++) {
       const a = built.args[i];
@@ -202,7 +243,9 @@ function runOnce({ id, bin, prompt, cwd, access, sessionId, ultra, model, effort
       args.push(a);
     }
     const parser = built.parser;
-    const env = { ...cleanEnv(), ...(extraEnv || {}) };
+    // ключ OpenRouter нужен только OpenCode (модели openrouter/…), остальным агентам его не отдаём
+    const { OPENROUTER_API_KEY: orKey, ...shared } = extraEnv || {};
+    const env = { ...cleanEnv(), ...shared, ...(id === 'opencode' && orKey ? { OPENROUTER_API_KEY: orKey } : {}) };
 
     let child;
     try {
@@ -272,7 +315,7 @@ function runOnce({ id, bin, prompt, cwd, access, sessionId, ultra, model, effort
     });
 
     child.stdin.on('error', () => {});
-    child.stdin.end(prompt);
+    child.stdin.end(built.stdin ? built.stdin(prompt) : prompt);
   });
 }
 
@@ -539,11 +582,89 @@ const PARSERS = {
     }
   },
 
-  // обычный текстовый вывод (Gemini CLI)
-  text(line, state, emit) {
-    state.text += line + '\n';
-    emit({ kind: 'text', text: state.text });
+  // agy --output-format stream-json: init · step_update · result
+  antigravity(line, state, emit) {
+    if (!line.trim()) return;
+    let j; try { j = JSON.parse(line); } catch { return; }
+    const type = j.event || j.type;
+    if (type === 'init') {
+      const i = j.init || {};
+      if (i.model) state.model = i.model;
+      state.tInit = Date.now();
+      return;
+    }
+    if (type === 'step_update') {
+      const s = j.step_update || {};
+      if (s.conversation_id) state.sessionId = s.conversation_id;
+      const idx = s.step_index ?? 0;
+      const st = String(s.step_type || '').toLowerCase();
+      if (s.text_delta) {
+        if (!state.tFirst) state.tFirst = Date.now();
+        if (/think|reason|thought/.test(st)) {
+          state.think = (state.think || '') + s.text_delta;
+          emit({ kind: 'thinking', text: state.think });
+        } else if (st === 'agent_response' || st === 'planner_response' || !st) {
+          // новый блок ответа — с новой строки
+          if (state.textStep != null && state.textStep !== idx && state.text) state.text += '\n\n';
+          state.textStep = idx;
+          state.text += s.text_delta;
+          emit({ kind: 'text', text: state.text });
+        }
+      }
+      if (st === 'tool' || s.tool_info || s.tool_name) {
+        const info = s.tool_info || {};
+        const name = s.tool_name || info.name || 'tool';
+        const p = info.parameters || {};
+        const file = p.file_path || p.filePath || p.path || p.target_file || p.TargetFile || p.AbsolutePath || null;
+        const pick = file || p.command || p.CommandLine || p.query || p.Query || p.pattern || p.url || p.Url || '';
+        const failed = !!info.error;
+        if (name === 'todo' || /todo/i.test(name)) {
+          const todos = p.todos || p.items;
+          if (Array.isArray(todos)) emit({ kind: 'todos', todos: todos.map(x => ({ text: x.content || x.text || '', status: x.status || 'pending' })) });
+        }
+        emit({ kind: 'step', id: `agy-${idx}`, status: failed ? 'error' : (s.state === 'DONE' ? 'done' : 'run'), title: name, tool: agyKind(name), path: typeof file === 'string' ? file : null,
+          detail: String(failed ? (info.error.message || info.error.type || '') : pick).replace(/\s+/g, ' ').slice(0, 160) });
+      }
+      for (const sub of s.subagent_info?.subagents || []) {
+        emit({ kind: 'subagent', id: sub.conversation_id || `${idx}-${sub.type_name}`, status: s.state === 'DONE' ? 'done' : 'run', name: sub.type_name || 'subagent', title: sub.role || '', at: Date.now(), ...(s.state === 'DONE' ? { end: Date.now() } : {}) });
+      }
+      const u = s.usage;
+      if (u) {
+        const used = u.total_tokens || ((u.input_tokens || 0) + (u.output_tokens || 0));
+        if (used) { state.ctxUsed = used; emit({ kind: 'context', used, window: null, model: state.model }); }
+      }
+      return;
+    }
+    if (type === 'result') {
+      const r = j.result || {};
+      if (r.conversation_id) state.sessionId = r.conversation_id;
+      state.turnDone = true;
+      const status = String(r.status || '').toUpperCase();
+      state.isError = !!r.error || (status && status !== 'SUCCESS');
+      const err = typeof r.error === 'string' ? r.error : (r.error?.message || r.error?.type || '');
+      state.finalResult = state.isError ? (err || t('Antigravity: {s}', { s: status || 'ERROR' })) : (typeof r.response === 'string' && r.response ? r.response : state.text);
+      if (state.isError) { state.lastError = err; if (NET_RE.test(err)) state.netFails = (state.netFails || 0) + 1; }
+      const u = r.usage || {};
+      const cacheRead = u.cache_read_tokens || 0;
+      // input_tokens у Gemini включает прочитанное из кэша — считаем только новые
+      state.usage = { input: Math.max(0, (u.input_tokens || 0) - cacheRead), cacheRead, cacheWrite: 0, output: u.output_tokens || 0, thinking: u.thinking_tokens || 0,
+        model: state.model || null, turns: r.num_turns || null, apiMs: r.duration_seconds ? Math.round(r.duration_seconds * 1000) : null,
+        startupMs: state.tInit ? state.tInit - state.t0 : null, firstMs: state.tFirst ? state.tFirst - state.t0 : null };
+    }
   },
 };
 
-module.exports = { openLogin, effortOf, binFor, normalizeUserPath, BINS, SAFE_ARG, run, detect, LABELS, PARSERS, buildCommand };
+// Инструменты Antigravity → тип шага для сводки
+function agyKind(name) {
+  const n = String(name || '').toLowerCase();
+  if (/write|create/.test(n)) return 'create';
+  if (/edit|replace|patch/.test(n)) return 'edit';
+  if (/read|view/.test(n)) return 'read';
+  if (/command|shell|terminal|bash|run/.test(n)) return 'run';
+  if (/grep|search|find|list|glob|codesearch/.test(n)) return /web/.test(n) ? 'web' : 'search';
+  if (/web|browser|url|fetch/.test(n)) return 'web';
+  if (/todo|plan/.test(n)) return 'plan';
+  return 'other';
+}
+
+module.exports = { openLogin, effortOf, binFor, normalizeUserPath, BINS, SAFE_ARG, run, detect, LABELS, RESUMABLE, PARSERS, buildCommand, parseAgyModels };

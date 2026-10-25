@@ -69,7 +69,7 @@ async function fetch(url, init) {
 }
 
 // ---------- окружение для CLI-агентов ----------
-// Claude Code, Codex, Gemini CLI и их подпроцессы (npm, git, curl) понимают HTTPS_PROXY / HTTP_PROXY
+// Claude Code, Codex, Antigravity CLI, OpenCode и их подпроцессы (npm, git, curl) понимают HTTPS_PROXY / HTTP_PROXY
 function envFor(url) {
   const no = 'localhost,127.0.0.1,::1';
   return { HTTPS_PROXY: url, HTTP_PROXY: url, https_proxy: url, http_proxy: url, ALL_PROXY: url, all_proxy: url, NO_PROXY: no, no_proxy: no };

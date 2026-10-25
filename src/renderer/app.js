@@ -24,9 +24,11 @@ const MODES = {
 const PROVIDERS = {
   claude: { name: 'Claude Code', domain: 'claude.ai', mono: 'C' },
   codex: { name: 'Codex', domain: 'openai.com', mono: 'O' },
-  'gemini-cli': { name: 'Gemini CLI', domain: 'gemini.google.com', mono: 'G' },
+  antigravity: { name: 'Antigravity', domain: 'antigravity.google', mono: 'A' },
   opencode: { name: 'OpenCode', domain: 'opencode.ai', mono: 'oc' },
   gemini: { name: 'Gemini', domain: 'gemini.google.com', mono: 'G' },
+  openrouter: { name: 'OpenRouter', domain: 'openrouter.ai', mono: 'OR' },
+  'gemini-cli': { name: 'Gemini CLI', domain: 'gemini.google.com', mono: 'G' }, // старые сообщения
 };
 function provIcon(id, cls = '') {
   const p = PROVIDERS[id];
@@ -46,7 +48,28 @@ function prettyModel(id) {
   return String(id).replace(/-(preview|latest|exp)(-[\d-]+)?$/i, '').split('-')
     .map(w => /^\d/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
-const listModels = (str) => String(str || '').split(',').map(x => x.trim()).filter(x => /^[\w.\-:]+(\/[\w.\-:]+)?$/.test(x));
+const MODEL_ID = /^~?[\w.\-:]+(\/~?[\w.\-:]+){0,2}$/;
+const listModels = (str) => String(str || '').split(',').map(x => x.trim()).filter(x => MODEL_ID.test(x));
+// Модели агента: свои из настроек → обнаруженные самим CLI (Antigravity) → models.json
+function agentModels(a) {
+  const own = listModels(state.settings.cliModels?.[a.id]);
+  const found = (a.models || []).filter(x => MODEL_ID.test(x));
+  const file = state.settings.catalog?.agents?.[a.id] || [];
+  return [...new Set([...own, ...(found.length ? found : file)])];
+}
+// Модели OpenRouter для меню чата: выбранные в настройках + список из models.json
+function orChatModels() {
+  const c = state.settings.catalog?.openrouter || {}, o = state.settings.openrouter || {};
+  return [...new Set([o.chat || c.chat, o.chatUltra || c.chatUltra, ...(c.list || [])].filter(Boolean))];
+}
+// Сессии агентов в чате (старые чаты: claudeSession / opencodeSession)
+function chatSessions(chat) {
+  const s = { ...(chat.sessions || {}) };
+  if (!s.claude && chat.claudeSession) s.claude = chat.claudeSession;
+  if (!s.opencode && chat.opencodeSession) s.opencode = chat.opencodeSession;
+  return s;
+}
+function resetSessions(chat) { chat.sessions = {}; chat.claudeSession = null; chat.opencodeSession = null; }
 let geminiModelsCache = null;
 async function geminiChatModels() {
   if (!geminiModelsCache && state.settings.hasKey) {
@@ -143,11 +166,11 @@ function petBounds() {
   const m = $('#main').getBoundingClientRect();
   return { floor: m.bottom - 2, minX: m.left + 24, maxX: m.right - 24, top: 0 };
 }
-function updateKeyBanner() { $('#keyBanner').classList.toggle('hidden', !!state.settings.hasKey || state.tab === 'code'); }
+function updateKeyBanner() { $('#keyBanner').classList.toggle('hidden', !!state.settings.hasKey || !!state.settings.hasOrKey || state.tab === 'code'); }
 
 async function detectAgents(force) {
   state.agents = await api.cli.detect(!!force);
-  const list = state.agents.map(a => ({ on: a.installed && a.loggedIn !== false, label: a.label + (a.installed && a.loggedIn === false ? ` (${t('нужен вход')})` : '') })).concat([{ on: !!state.settings.hasKey, label: 'Gemini API' }]);
+  const list = state.agents.map(a => ({ on: a.installed && a.loggedIn !== false, label: a.label + (a.installed && a.loggedIn === false ? ` (${t('нужен вход')})` : '') })).concat([{ on: !!state.settings.hasKey, label: 'Gemini API' }, { on: !!state.settings.hasOrKey, label: 'OpenRouter' }]);
   $('#agentDots').innerHTML = list.map(a => `<i class="${a.on ? 'on' : ''}" title="${esc(a.label)}: ${a.on ? t('готов') : t('нет')}"></i>`).join('');
   renderMeta();
   return state.agents;
@@ -218,7 +241,7 @@ function newChat(kind = state.tab, { projectId = null, push = true, focus = true
   // переиспользуем пустой черновик той же вкладки
   let chat = [...state.cache.values()].find(c => c.kind === kind && !c.messages.length && (c.projectId || null) === projectId);
   if (!chat) {
-    chat = { id: uid(), kind, title: '', createdAt: Date.now(), messages: [], cwd: project?.folder || null, projectId, executor: null, claudeSession: null, todos: [] };
+    chat = { id: uid(), kind, title: '', createdAt: Date.now(), messages: [], cwd: project?.folder || null, projectId, executor: null, sessions: {}, todos: [] };
     state.cache.set(chat.id, chat);
   }
   state.mode = kind === 'code' ? 'code' : 'auto';
@@ -265,11 +288,13 @@ function renderSidebar() {
 
   $('#navProjects').classList.toggle('on', state.view.type === 'projects' || state.view.type === 'project');
   $('#navMedia').classList.toggle('on', state.view.type === 'media');
+  $('#navStats').classList.toggle('on', state.view.type === 'stats');
   $('#backBtn').disabled = state.hpos <= 0;
   $('#fwdBtn').disabled = state.hpos >= state.hist.length - 1;
 }
 
 /* ================= Отрисовка ================= */
+let lastPageKey = null;
 function render() {
   const v = state.view;
   const main = $('#main');
@@ -287,6 +312,9 @@ function render() {
     main.classList.remove('is-empty');
     main.classList.add('dim-ascii');
     ascii.setDim(true);
+    // новая страница открывается сверху, а не с прокруткой предыдущей
+    const key = `${v.type}:${v.id || ''}`;
+    if (lastPageKey !== key) { $('#viewPage').scrollTop = 0; lastPageKey = key; }
     renderPage();
   }
   renderCrumbs();
@@ -313,6 +341,8 @@ function renderCrumbs() {
     const p = state.projects.find(x => x.id === v.id);
     el.innerHTML = `<button class="crumb-link" data-go="projects">${t('Проекты')}</button><span class="crumb-sep">/</span><span class="crumb-plain">${esc(p?.name || '')}</span>`;
   } else if (v.type === 'media') el.innerHTML = `<span class="crumb-plain">${t('Медиа')}</span>`;
+  else if (v.type === 'stats') el.innerHTML = `<span class="crumb-plain">${t('Статистика')}</span>`;
+  else if (v.type === 'changelog') el.innerHTML = `<span class="crumb-plain">${t('Что нового')}</span>`;
 }
 
 function renderChat(scrollBottom) {
@@ -1059,7 +1089,7 @@ async function run(chat, item, { retry = false } = {}) {
       chatId: chat.id, text: item.text || t('Опиши изображение'), mode: item.mode, ultra: item.ultra, effort: state.settings.effort, team: chat.kind === 'code' && !!state.settings.team, arena: !!item.arena,
       executor: chat.executor || null, agentModel: chat.agentModel || null, chatModel: chat.chatModel || null,
       images: item.images.map(a => ({ mime: a.mime, data: a.data })),
-      cwd: chat.cwd, history, claudeSession: chat.claudeSession, opencodeSession: chat.opencodeSession, lastRoute: prevAssistant?.route || null,
+      cwd: chat.cwd, history, sessions: chatSessions(chat), lastRoute: prevAssistant?.route || null,
     });
     state.tasks.set(taskId, { chatId: chat.id, msgId: aMsg.id, started: Date.now() });
     const early = earlyEvents.get(taskId);
@@ -1136,8 +1166,7 @@ async function onTaskEvent(ev) {
       if (ev.files) m.files = ev.files;
       if (ev.usage) m.usage = ev.usage;
       if (ev.context) { chat.context = { ...chat.context, ...ev.context, at: Date.now() }; if (currentChat() === chat) renderCtx(); }
-      if (ev.executor === 'claude' && ev.sessionId) chat.claudeSession = ev.sessionId;
-      if (ev.executor === 'opencode' && ev.sessionId) chat.opencodeSession = ev.sessionId;
+      if (ev.sessionId && ev.executor && PROVIDERS[ev.executor]) chat.sessions = { ...chatSessions(chat), [ev.executor]: ev.sessionId };
       m.steps.forEach(s => { if (s.status === 'run') s.status = 'done'; });
       if (m.thinking && !m.thinkEnd) m.thinkEnd = Date.now();
       (m.subs || []).forEach(s => { if (s.status === 'run') { s.status = 'done'; s.end = s.end || Date.now(); } });
@@ -1267,7 +1296,7 @@ function renderMeta() {
     if (chat.executor) { prov = chat.executor; label = chat.agentModel ? prettyModel(chat.agentModel) : PROVIDERS[prov].name; }
     else if (code) { const first = state.settings.codeExecutors.map(id => state.agents.find(a => a.id === id)).find(a => a?.installed); prov = first?.id || null; label = first?.label || t('Агент'); }
   }
-  if (!code && chat.chatModel) { prov = 'gemini'; label = prettyModel(chat.chatModel); }
+  if (!code && chat.chatModel) { const or = /^or:/.test(chat.chatModel); prov = or ? 'openrouter' : 'gemini'; label = prettyModel(or ? chat.chatModel.slice(3) : chat.chatModel); }
   mb.innerHTML = `${provIcon(prov)}<span class="mb-lbl">${esc(label)}</span>`;
   mb.title = t('Модель');
   $('#ultraBtn').classList.toggle('on', !!state.settings.ultra);
@@ -1474,7 +1503,7 @@ async function agentMenu() {
   const chat = currentChat();
   const code = chat.kind === 'code';
   const agents = state.agents.length ? state.agents : await detectAgents();
-  const pickAgent = (id, model) => { chat.executor = id; chat.agentModel = model; if (!code) chat.chatModel = null; chat.claudeSession = null; chat.opencodeSession = null; renderMeta(); persist(chat); };
+  const pickAgent = (id, model) => { chat.executor = id; chat.agentModel = model; if (!code) chat.chatModel = null; resetSessions(chat); renderMeta(); persist(chat); };
   const items = [
     { label: t('Модель') },
     { icon: 'sparkles', text: t('Авто'), hint: t('Synapse выберет'), sel: !chat.executor && !chat.chatModel, act: () => { chat.executor = null; chat.agentModel = null; chat.chatModel = null; renderMeta(); persist(chat); } },
@@ -1482,16 +1511,20 @@ async function agentMenu() {
   for (const a of agents) {
     items.push('-', { label: a.label + (a.installed ? '' : ` · ${t('не установлен')}`) });
     items.push({ iconHtml: provIcon(a.id), text: t('По умолчанию'), disabled: !a.installed, sel: chat.executor === a.id && !chat.agentModel, act: () => pickAgent(a.id, null) });
-    let ms = listModels(state.settings.cliModels?.[a.id]);
-    if (!ms.length && a.id === 'gemini-cli') ms = await geminiChatModels();
-    for (const m of ms) {
+    for (const m of agentModels(a)) {
       items.push({ iconHtml: provIcon(a.id), text: prettyModel(m), hint: m, disabled: !a.installed, sel: chat.executor === a.id && chat.agentModel === m, act: () => pickAgent(a.id, m) });
     }
   }
   if (!code) {
     const gm = [...new Set([state.settings.models.chat, state.settings.models.chatUltra, ...(await geminiChatModels())])].slice(0, 8);
-    items.push('-', { label: t('Gemini · чат') });
-    for (const m of gm) items.push({ iconHtml: provIcon('gemini'), text: prettyModel(m), hint: m, sel: chat.chatModel === m, act: () => { chat.chatModel = m; renderMeta(); persist(chat); } });
+    if (state.settings.hasKey) {
+      items.push('-', { label: t('Gemini · чат') });
+      for (const m of gm) items.push({ iconHtml: provIcon('gemini'), text: prettyModel(m), hint: m, sel: chat.chatModel === m, act: () => { chat.chatModel = m; renderMeta(); persist(chat); } });
+    }
+    if (state.settings.hasOrKey) {
+      items.push('-', { label: t('OpenRouter · чат') });
+      for (const m of orChatModels()) items.push({ iconHtml: provIcon('openrouter'), text: prettyModel(m), hint: m, sel: chat.chatModel === `or:${m}`, act: () => { chat.chatModel = `or:${m}`; renderMeta(); persist(chat); } });
+    }
   }
   items.push('-', { icon: 'settings', text: t('Настроить модели…'), check: false, act: () => openSettings('agents') });
   menu($('#agentBtn'), items, { align: 'right' });
@@ -1500,7 +1533,7 @@ async function setAccess(v) { state.settings = await api.settings.set({ agentAcc
 async function pickFolder() { const d = await api.pickFolder(); if (d) setCwd(d); }
 function setCwd(dir) {
   const chat = currentChat();
-  chat.cwd = dir; chat.claudeSession = null; chat.opencodeSession = null;
+  chat.cwd = dir; resetSessions(chat);
   renderChat(); persist(chat);
 }
 
@@ -1652,6 +1685,13 @@ async function renderPage() {
       { icon: 'trash', text: t('Удалить проект'), danger: true, check: false, act: async () => { await api.projects.remove(p.id); await Promise.all([refreshProjects(), refreshChats()]); state.cache.forEach(c => { if (c.projectId === p.id) c.projectId = null; }); go({ type: 'projects' }); toast(t('Проект удалён, чаты сохранены')); } },
     ]);
   }
+  if (v.type === 'stats') return renderStats(el);
+  if (v.type === 'changelog') {
+    const md = await api.changelog();
+    el.innerHTML = `<div class="page-inner narrow"><div class="page-head"><h1>${t('Что нового')}</h1><span class="grow"></span><span class="dim">Synapse ${esc(state.settings.version)}</span></div>
+      <div class="md changelog">${md ? DOMPurify.sanitize(marked.parse(md.replace(/^# .*\n/, ''))) : `<p class="dim">${t('Список изменений не найден.')}</p>`}</div></div>`;
+    return;
+  }
   if (v.type === 'media') {
     const items = await api.media();
     el.innerHTML = `<div class="page-inner">
@@ -1666,9 +1706,171 @@ async function renderPage() {
   }
 }
 
+/* ================= Статистика ================= */
+// Как профиль в Codex: токены за всё время, рекорды, серии, тепловая карта активности
+const fmtBig = (n) => {
+  n = Number(n) || 0;
+  const en = I18N.lang === 'en';
+  if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + (en ? 'B' : ' млрд');
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + (en ? 'M' : ' млн');
+  if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + (en ? 'K' : ' тыс');
+  return String(n);
+};
+const fmtLong = (ms) => {
+  const s = Math.round((ms || 0) / 1000);
+  if (s < 60) return fmtSec(s);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? `${h} ${t('ч')} ${m} ${t('мин')}` : fmtSec(s);
+};
+const dayStr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+let statsMode = 'days';
+const EFFORT_NAME = { auto: 'Авто', low: 'Низкий', medium: 'Средний', high: 'Высокий', xhigh: 'Очень высокий', max: 'Максимум' };
+
+function heatmapHtml(st) {
+  // 53 недели, столбец = неделя (пн..вс), как в GitHub / Codex
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  const start = new Date(today); start.setDate(start.getDate() - 7 * 52 - ((today.getDay() + 6) % 7));
+  const cols = [];
+  const months = [];
+  let cum = 0;
+  for (let w = 0; w < 53; w++) {
+    const col = [];
+    for (let d = 0; d < 7; d++) {
+      const day = new Date(start); day.setDate(start.getDate() + w * 7 + d);
+      if (day > today) { col.push(null); continue; }
+      const k = dayStr(day);
+      const v = st.days[k]?.tokens || 0;
+      cum += v;
+      col.push({ k, v, tasks: st.days[k]?.tasks || 0, cum });
+      if (d === 0 && day.getDate() <= 7) months.push({ w, label: day.toLocaleDateString(I18N.locale, { month: 'short' }) });
+    }
+    cols.push(col);
+  }
+  if (statsMode === 'cumulative') {
+    const pts = cols.flat().filter(Boolean);
+    const max = Math.max(1, pts.at(-1)?.cum || 0);
+    const W = 1000, H = 150;
+    const path = pts.map((p, i) => `${i ? 'L' : 'M'}${(i / Math.max(1, pts.length - 1) * W).toFixed(1)},${(H - p.cum / max * (H - 8) - 4).toFixed(1)}`).join(' ');
+    return `<svg class="cum-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${t('Нарастающим итогом')}">
+      <path class="cum-area" d="${path} L${W},${H} L0,${H} Z"/><path class="cum-line" d="${path}" vector-effect="non-scaling-stroke"/></svg>
+      <div class="hm-months">${months.map(m => `<span style="left:${(m.w / 53 * 100).toFixed(2)}%">${esc(m.label)}</span>`).join('')}</div>`;
+  }
+  const vals = statsMode === 'weeks' ? cols.map(c => c.reduce((a, x) => a + (x?.v || 0), 0)) : cols.flat().filter(Boolean).map(x => x.v);
+  const max = Math.max(1, ...vals);
+  const lvl = (v) => (v <= 0 ? 0 : Math.min(4, Math.ceil(v / max * 4)));
+  const body = statsMode === 'weeks'
+    ? cols.map((c, w) => { const v = vals[w]; const first = c.find(Boolean); return `<div class="hm-col week"><i class="l${lvl(v)}" style="--d:${w}" title="${first ? esc(first.k) : ''} · ${fmtBig(v)} ${t('токенов')}"></i></div>`; }).join('')
+    : cols.map((c, w) => `<div class="hm-col">${c.map(x => (x ? `<i class="l${lvl(x.v)}" style="--d:${w}" title="${esc(x.k)} · ${fmtBig(x.v)} ${t('токенов')} · ${x.tasks} ${plural(x.tasks, [t('задача'), t('задачи'), t('задач')])}"></i>` : '<i class="none"></i>')).join('')}</div>`).join('');
+  return `<div class="heatmap ${statsMode}">${body}</div>
+    <div class="hm-months">${months.map(m => `<span style="left:${(m.w / 53 * 100).toFixed(2)}%">${esc(m.label)}</span>`).join('')}</div>
+    <div class="hm-legend">${t('Меньше')}<i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i>${t('Больше')}</div>`;
+}
+
+async function renderStats(el) {
+  const st = await api.stats();
+  const name = state.settings.user || 'user';
+  const execName = (id) => PROVIDERS[id]?.name || ({ arena: t('Арена'), chat: t('Чат'), code: t('Код'), image: t('Изображения'), video: t('Видео') }[id] || id);
+  const byEx = Object.entries(st.byExecutor).sort((a, b) => b[1].tokens - a[1].tokens || b[1].tasks - a[1].tasks);
+  const maxEx = Math.max(1, ...byEx.map(([, v]) => v.tokens));
+  const cells = [
+    [fmtBig(st.total), t('Токены за всё время')],
+    [fmtBig(st.maxDay.tokens), t('Максимум токенов за день')],
+    [st.longest ? fmtLong(st.longest.ms) : '—', t('Самая длительная задача')],
+    [`${st.streak.best} ${plural(st.streak.best, [t('день'), t('дня'), t('дней')])}`, t('Самая длинная серия')],
+    [`${st.streak.current} ${plural(st.streak.current, [t('день'), t('дня'), t('дней')])}`, t('Текущая серия')],
+  ];
+  el.innerHTML = `<div class="page-inner narrow stats-page">
+    <div class="profile">
+      <span class="avatar xl">${esc(name.slice(0, 1).toUpperCase())}</span>
+      <h1>${esc(name)}</h1>
+      <span class="dim">${st.first ? t('С нами с {d}', { d: new Date(st.first).toLocaleDateString(I18N.locale, { day: 'numeric', month: 'long', year: 'numeric' }) }) : t('Здесь появится ваша статистика')}</span>
+    </div>
+    <div class="stat-strip">${cells.map(([v, l], i) => `<div class="ss-cell" style="--i:${i}"><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join('')}</div>
+
+    <section class="st-sec">
+      <div class="st-head"><h3>${t('Активность токенов')}</h3><span class="grow"></span>
+        <div class="seg-text">${[['days', t('По дням')], ['weeks', t('По неделям')], ['cumulative', t('Нарастающим итогом')]].map(([k, l]) => `<button data-stats-mode="${k}" class="${statsMode === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
+      <div class="hm-wrap">${heatmapHtml(st)}</div>
+    </section>
+
+    <section class="st-sec">
+      <div class="st-head"><h3>${t('Исполнители')}</h3></div>
+      ${byEx.length ? `<div class="ex-bars">${byEx.map(([id, v], i) => `<div class="ex-row" style="--i:${i}">
+        <span class="ex-name">${provIcon(PROVIDERS[id] ? id : null)}${esc(execName(id))}</span>
+        <span class="ex-bar"><i style="--w:${(v.tokens / maxEx * 100).toFixed(1)}%"></i></span>
+        <span class="ex-val">${fmtBig(v.tokens)}<small>${v.tasks} ${plural(v.tasks, [t('задача'), t('задачи'), t('задач')])}</small></span></div>`).join('')}</div>`
+        : `<div class="st-empty">${t('Пока нет задач — статистика появится после первой.')}</div>`}
+    </section>
+
+    ${st.models.length ? `<section class="st-sec">
+      <div class="st-head"><h3>${t('Любимые модели')}</h3></div>
+      <div class="model-list">${st.models.map((m, i) => `<div class="ml-row" style="--i:${i}">${provIcon(PROVIDERS[m.executor] ? m.executor : null)}<span class="ml-name">${esc(prettyModel(m.id))}<small class="mono">${esc(m.id)}</small></span><span class="ml-val">${fmtBig(m.tokens)}</span></div>`).join('')}</div>
+    </section>` : ''}
+
+    <section class="st-sec">
+      <div class="st-head"><h3>${t('Статистика')}</h3></div>
+      <div class="kv">
+        <div><span>${t('Всего задач')}</span><b>${st.tasks}${st.tasks ? ` · ${Math.round(st.ok / st.tasks * 100)}% ${t('успешно')}` : ''}</b></div>
+        <div><span>${t('Новые токены / из кэша')}</span><b>${fmtBig(st.fresh)} / ${fmtBig(st.cache)}</b></div>
+        <div><span>${t('Токены рассуждений')}</span><b>${fmtBig(st.thinking)}</b></div>
+        <div><span>${t('Наиболее частый уровень рассуждений')}</span><b>${st.effort ? `${t(EFFORT_NAME[st.effort.level] || st.effort.level)} · ${st.effort.share}%` : '—'}</b></div>
+        <div><span>${t('Режим Ultra')}</span><b>${st.ultra ? `${st.ultra} ${plural(st.ultra, [t('раз'), t('раза'), t('раз')])}` : t('Не используется')}</b></div>
+        <div><span>${t('Запусков Арены')}</span><b>${st.arena}</b></div>
+        <div><span>${t('Активных дней')}</span><b>${st.activeDays}</b></div>
+        ${st.cost ? `<div><span>${t('Стоимость по прайсу API')}</span><b>$${st.cost.toFixed(2)}</b></div>` : ''}
+      </div>
+      <div class="hint">${t('Считается на этом компьютере по ответам агентов и API. По подписке вы платите фиксированно — прайс показан для сравнения.')}</div>
+    </section>
+  </div>`;
+  el.querySelectorAll('[data-stats-mode]').forEach(b => b.addEventListener('click', () => { statsMode = b.dataset.statsMode; renderStats(el); }));
+}
+
+/* ================= Меню аккаунта ================= */
+// Как в Claude: настройки, статистика, язык, что нового, справка
+function accountMenu() {
+  const s = state.settings;
+  menu($('#accountBtn'), [
+    { label: s.user || 'user' },
+    { icon: 'settings', text: t('Настройки'), hint: 'Ctrl ,', check: false, act: () => openSettings() },
+    { icon: 'chart', text: t('Статистика'), check: false, act: () => go({ type: 'stats' }) },
+    { icon: 'globe', text: t('Язык'), hint: I18N.lang === 'en' ? 'English' : 'Русский', check: false, act: () => languageMenu() },
+    '-',
+    { icon: 'bot', text: t('Агенты и модели'), check: false, act: () => openSettings('agents') },
+    { icon: 'key', text: t('Ключи API'), check: false, act: () => openSettings('api') },
+    '-',
+    { icon: 'sparkles', text: t('Что нового'), hint: s.version, check: false, act: () => go({ type: 'changelog' }) },
+    { icon: 'help', text: t('Справка и ошибки'), check: false, act: () => window.open('https://github.com/wsq4kar/synapse/issues') },
+    { icon: 'info', text: t('О программе'), check: false, act: () => openSettings('about') },
+  ]);
+}
+async function setLang(l) {
+  if (l === I18N.lang) return;
+  await saveSettings({ lang: l });
+  applyLang();
+}
+function languageMenu() {
+  menu($('#accountBtn'), [
+    { label: t('Язык') },
+    { text: 'Русский', sel: I18N.lang === 'ru', act: () => setLang('ru') },
+    { text: 'English', sel: I18N.lang === 'en', act: () => setLang('en') },
+  ]);
+}
+
 /* ================= Настройки ================= */
 let stab = 'api';
+// Слова для поиска по настройкам (RU + EN)
+const SETTINGS_WORDS = {
+  api: 'gemini openrouter ключ key api модель model чат chat изображения image видео video veo nano banana маршрутизатор router',
+  agents: 'агент agent claude codex antigravity opencode модели models путь path арена arena порядок order вход login папка folder',
+  memory: 'память memory обо мне about claude.md скиллы skills коннекторы connectors mcp плагины plugins',
+  look: 'тема theme тёмная dark светлая light шрифт font размер size цвет color accent акцент анимации motion язык language ascii пузыри',
+  pets: 'питомцы pets',
+  net: 'сеть network прокси proxy ssh vpn firewall брандмауэр туннель tunnel',
+  log: 'журнал log история history задачи tasks',
+  about: 'о программе about версия version клавиши shortcuts',
+};
 let modelsCache = null;
+let orModelsCache = null;
 function openSettings(tab = stab) { stab = tab; $('#settingsModal').classList.add('open'); renderSettings(); }
 function closeSettings() { $('#settingsModal').classList.remove('open'); }
 async function saveSettings(patch) { state.settings = await api.settings.set(patch); return state.settings; }
@@ -1692,6 +1894,31 @@ function lookHtml() {
       <span class="tr-text">${t('Пузыри у моих сообщений')}<small>${t('Если выключить, ваши сообщения будут простым текстом')}</small></span></div>
     <div class="field-label" style="margin-top:14px">${t('Предпросмотр')}</div>
     <div class="look-preview"><b>Synapse</b> — ${t('так будет выглядеть текст в переписке. Код, ответы и рассуждения используют этот шрифт и размер.')}<br><span class="lp-chip">${t('Акцент')}</span></div>`;
+}
+
+// OpenRouter: ключ и модели (пустое поле — модель из models.json)
+function orSettingsHtml(s) {
+  const def = s.catalog?.openrouter || {}, own = s.openrouter || {};
+  const field = (k, label, hint, filter) => `<div class="field"><label>${label}</label>
+    <input class="input mono" data-or-model="${k}" list="orList-${k}" value="${esc(own[k] || '')}" placeholder="${esc(def[k] || '')}" spellcheck="false">
+    <datalist id="orList-${k}">${(orModelsCache || []).filter(filter).slice(0, 400).map(m => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('')}</datalist>
+    <div class="hint">${hint}</div></div>`;
+  const text = m => m.output.includes('text');
+  return `<h2 class="or-h">${provIcon('openrouter')}OpenRouter</h2>
+    <p class="lead">${t('Сотни моделей — Claude, GPT, Gemini, DeepSeek, Kimi и другие — по одному ключу. Если ключа Gemini нет, чат, маршрутизатор и изображения работают через OpenRouter. Модели openrouter/… получает и агент OpenCode.')}</p>
+    <div class="field"><label>${t('Ключ API')}</label>
+      <div class="row"><input class="input mono" id="orKeyInput" type="password" placeholder="${s.hasOrKey ? t('Ключ сохранён — введите новый, чтобы заменить') : 'sk-or-…'}" spellcheck="false" autocomplete="off">
+        <button class="btn" id="orKeyShow">${icon('eye')}</button><button class="btn primary" id="orKeySave">${t('Сохранить')}</button></div>
+      <div class="hint"><a href="https://openrouter.ai/keys" target="_blank">openrouter.ai/keys</a> → Create key. ${t('Хранится только на этом компьютере в зашифрованном виде.')} ${s.hasOrKey ? ('<a href="#" id="orKeyRemove" style="color:var(--danger)">' + t('Удалить ключ') + '</a>') : ''}</div></div>
+    <div class="row" style="margin:-4px 0 20px">
+      <button class="btn" id="orKeyTest" ${s.hasOrKey ? '' : 'disabled'}>${icon('check')}${t('Проверить ключ')}</button>
+      <button class="btn" id="orLoadModels">${icon('refresh')}${t('Список моделей')}</button></div>
+    <div class="grid2">
+      ${field('chat', t('Чат'), t('Пусто — модель по умолчанию'), text)}
+      ${field('chatUltra', t('Чат · Ultra'), t('Старшая модель для режима Ultra'), text)}
+      ${field('router', t('Маршрутизатор'), t('Быстрая и дешёвая модель'), text)}
+      ${field('image', t('Изображения'), t('Модель с выходом «изображение»'), m => m.output.includes('image'))}
+    </div>`;
 }
 
 async function renderSettings() {
@@ -1729,7 +1956,8 @@ async function renderSettings() {
         ${pick('videoUltra', t('Видео · Ultra'), t('Veo, максимальное качество'), m => /veo/i.test(m.id))}
       </div>
       <div class="field"><span class="field-label">${t('Формат видео')}</span>
-        <div class="seg">${['16:9', '9:16'].map(a => `<button data-aspect="${a}" class="${s.videoAspect === a ? 'on' : ''}">${a}</button>`).join('')}</div></div>`;
+        <div class="seg">${['16:9', '9:16'].map(a => `<button data-aspect="${a}" class="${s.videoAspect === a ? 'on' : ''}">${a}</button>`).join('')}</div></div>
+      ${orSettingsHtml(s)}`;
   }
   if (stab === 'agents') {
     if (!state.agents.length) await detectAgents();
@@ -1755,12 +1983,14 @@ async function renderSettings() {
         </div>
         ${!s.cliPaths[id] && a.installed && where ? `<div class="ag-found">${icon('check')}${t('Найден автоматически')}: <span class="mono">${esc(where)}</span></div>` : ''}
         ${!a.installed ? `<div class="ag-found warn">${t('Укажите файл {f} или папку с ним — или установите CLI и нажмите «Проверить снова».', { f: a.bin && /[\\/]/.test(a.bin) ? a.bin.split(/[\\/]/).pop() : (a.bin || id) })}</div>` : ''}
-        <div class="ag-field"><span class="ag-lbl">${t('Модели')}</span>
-          <input class="input mono" data-cli-models="${id}" value="${esc(s.cliModels?.[id] || '')}" placeholder="${t('модели через запятую')}" spellcheck="false"></div>
+        ${agentModels(a).length ? `<div class="ag-models">${agentModels(a).map(m => `<span class="chip" title="${esc(m)}">${esc(prettyModel(m))}</span>`).join('')}</div>` : ''}
+        <div class="ag-field"><span class="ag-lbl">${t('Ещё')}</span>
+          <input class="input mono" data-cli-models="${id}" value="${esc(s.cliModels?.[id] || '')}" placeholder="${t('свои модели через запятую — необязательно')}" spellcheck="false"></div>
       </div>`; }).join('')}</div>
-      <div class="row" style="margin:6px 0 20px"><button class="btn" id="redetect">${icon('refresh')}${t('Проверить снова')}</button></div>
+      <div class="row" style="margin:6px 0 20px"><button class="btn" id="redetect">${icon('refresh')}${t('Проверить снова')}</button>
+        <button class="btn" id="catalogRefresh" title="${t('Списки моделей берутся из файла models.json и обновляются с GitHub')}">${icon('download')}${t('Обновить списки моделей')}</button></div>
       <div class="toggle-row" id="smartToggle"><span class="switch ${s.smartRouting ? 'on' : ''}"></span>
-        <span class="tr-text">${t('Умный выбор исполнителя')}<small>${t('Если по словам задача неясна, Synapse коротко спрашивает Gemini')}</small></span></div>
+        <span class="tr-text">${t('Умный выбор исполнителя')}<small>${t('Если по словам задача неясна, Synapse коротко спрашивает Gemini или OpenRouter')}</small></span></div>
       <div class="field" style="margin-top:16px"><label>${t('Папка для новых сессий')}</label>
         <div class="row"><input class="input mono" id="wsRoot" value="${esc(s.workspaceRoot)}" spellcheck="false"><button class="btn" id="wsPick">${icon('folder')}${t('Выбрать')}</button></div>
         <div class="hint">${t('Если окружение не выбрано, агент работает в отдельной подпапке здесь.')}</div></div>
@@ -1770,7 +2000,7 @@ async function renderSettings() {
     const n = s.net || {};
     const mode = n.mode || 'system';
     html = `<h2>${t('Сеть')}</h2>
-      <p class="lead">${t('Как нейросети выходят в интернет: Gemini, Claude Code, Codex, Gemini CLI и OpenCode.')}</p>
+      <p class="lead">${t('Как нейросети выходят в интернет: Gemini, OpenRouter, Claude Code, Codex, Antigravity и OpenCode.')}</p>
       <div class="seg net-seg" style="margin-bottom:16px">
         ${[['system', 'monitor', t('Как в Windows')], ['http', 'globe', t('HTTP-прокси')], ['ssh', 'key', t('SSH-сервер')]].map(([k, ic, lbl]) => `<button data-net-mode="${k}" class="${mode === k ? 'on' : ''}">${icon(ic)}${lbl}</button>`).join('')}
       </div>
@@ -1794,7 +2024,7 @@ async function renderSettings() {
     html = `<h2>${t('Память и контекст')}</h2>
       <p class="lead">${t('Чтобы нейросети знали вас: что передать им о себе, и что подключено в Claude Code.')}</p>
       <div class="toggle-row" id="memToggle"><span class="switch ${s.memoryEnabled !== false ? 'on' : ''}"></span>
-        <span class="tr-text">${t('Передавать «Обо мне» нейросетям')}<small>${t('Claude Code — в системный промпт, Gemini — в системную инструкцию, Codex и Gemini CLI — в начало задачи.')}</small></span></div>
+        <span class="tr-text">${t('Передавать «Обо мне» нейросетям')}<small>${t('Claude Code — в системный промпт, Gemini и OpenRouter — в системную инструкцию, Codex, Antigravity и OpenCode — в начало новой сессии.')}</small></span></div>
       <div class="field"><label>${t('Обо мне')}</label>
         <textarea class="input mem-text" id="memText" rows="9" spellcheck="true" placeholder="${t('Например: меня зовут…, пишу по-русски, коротко и по делу. Делаю игры на Roblox и сервер RAGE MP. В интерфейсах — SVG-иконки вместо эмодзи…')}">${esc(mem.text)}</textarea>
         <div class="hint"><span id="memCount">${mem.text.length}</span> / 12000 · ${t('Хранится только на этом компьютере. Можно скопировать сюда память из claude.ai (Настройки → Память).')}</div></div>
@@ -1852,7 +2082,7 @@ async function renderSettings() {
   }
   if (stab === 'about') {
     html = `<h2>Synapse ${esc(s.version)}</h2><p class="lead">${t('Локальный ИИ-агент, который сам решает, кому отдать задачу.')}</p>
-      <div class="note">${t('Код и файлы — Claude Code, Codex, Gemini CLI или OpenCode на этом компьютере, под вашим входом. Чат, изображения и видео — Gemini API по вашему ключу.')}</div>
+      <div class="note">${t('Код и файлы — Claude Code, Codex, Antigravity или OpenCode на этом компьютере, под вашим входом. Чат и изображения — Gemini API или OpenRouter по вашему ключу, видео — Gemini API.')}</div>
       <div class="note">${t('Рассчитано на личное использование на одном компьютере: подписки предназначены только для их владельца.')}</div>
       <div class="note">${t('Клавиши: Ctrl+N — новый, Ctrl+1/2 — чат/код, Ctrl+K — поиск, Ctrl+U — Ultra, Ctrl+. — прогресс, Ctrl+B — панель, Alt+←/→ — назад/вперёд, Ctrl+Enter — отправить сразу.')}</div>
       <div class="row"><button class="btn" id="openData">${icon('folderOpen')}${t('Папка с сессиями')}</button></div>`;
@@ -2046,6 +2276,36 @@ function bindSettings(body) {
   bindMemory(body);
   all('[data-goto-stab]', el => el.addEventListener('click', () => { stab = el.dataset.gotoStab; renderSettings(); }));
   on('#keyShow', 'click', () => { const i = $('#keyInput'); i.type = i.type === 'password' ? 'text' : 'password'; });
+  // OpenRouter
+  on('#orKeyShow', 'click', () => { const i = $('#orKeyInput'); i.type = i.type === 'password' ? 'text' : 'password'; });
+  on('#orKeySave', 'click', async () => {
+    const v = $('#orKeyInput').value.trim();
+    if (!v) return toast(t('Вставьте ключ'), true);
+    await api.orKey.set(v);
+    state.settings = await api.settings.get();
+    updateKeyBanner(); detectAgents(); toast(t('Ключ сохранён')); renderSettings();
+  });
+  on('#orKeyRemove', 'click', async (e) => { e.preventDefault(); await api.orKey.set(''); state.settings = await api.settings.get(); updateKeyBanner(); detectAgents(); renderSettings(); });
+  on('#orKeyTest', 'click', async (e) => {
+    const b = e.currentTarget; b.disabled = true;
+    try {
+      const r = await api.orKey.test();
+      const spent = r.usage != null ? ` · ${t('потрачено')} $${Number(r.usage).toFixed(2)}${r.limit != null ? ` / $${Number(r.limit).toFixed(2)}` : ''}` : '';
+      toast(`${t('Ключ работает')}${r.free ? ` · ${t('бесплатный тариф')}` : ''}${spent}`);
+    } catch (err) { toast(cleanErr(err), true); }
+    b.disabled = false;
+  });
+  on('#orLoadModels', 'click', async (e) => { const b = e.currentTarget; b.disabled = true; try { orModelsCache = await api.orModels(); toast(`${t('Загружено моделей:')} ${orModelsCache.length}`); renderSettings(); } catch (err) { toast(cleanErr(err), true); b.disabled = false; } });
+  all('[data-or-model]', el => el.addEventListener('change', async () => {
+    const v = el.value.trim();
+    if (v && !/^~?[\w.\-]+\/[\w.\-]+(:[\w-]+)?$/.test(v)) return toast(t('Некорректное имя модели'), true);
+    await saveSettings({ openrouter: { ...(state.settings.openrouter || {}), [el.dataset.orModel]: v } });
+    toast(t('Сохранено'));
+  }));
+  on('#catalogRefresh', 'click', async (e) => {
+    const b = e.currentTarget; b.disabled = true;
+    try { await api.catalog.refresh(); state.settings = await api.settings.get(); toast(t('Списки моделей обновлены')); renderSettings(); } catch (err) { toast(cleanErr(err), true); b.disabled = false; }
+  });
   on('#keySave', 'click', async () => {
     const v = $('#keyInput').value.trim();
     if (!v) return toast(t('Вставьте ключ'), true);
@@ -2199,6 +2459,20 @@ function bindUI() {
   $('#navNew').addEventListener('click', () => newChat(state.tab));
   $('#navProjects').addEventListener('click', () => go({ type: 'projects' }));
   $('#navMedia').addEventListener('click', () => go({ type: 'media' }));
+  $('#navStats').addEventListener('click', () => go({ type: 'stats' }));
+  // Поиск по настройкам: по названиям разделов и словам внутри них
+  $('#settingsSearch').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    let first = null;
+    $$('#settingsNav [data-stab]').forEach(b => {
+      const hit = !q || (b.textContent + ' ' + (SETTINGS_WORDS[b.dataset.stab] || '')).toLowerCase().includes(q);
+      b.classList.toggle('filtered', !hit);
+      if (hit && !first) first = b;
+    });
+    $$('#settingsNav .nav-group').forEach(g => g.classList.toggle('hidden', !!q));
+    $('#settingsEmpty').classList.toggle('hidden', !!first);
+    if (first && $(`#settingsNav [data-stab="${stab}"]`).classList.contains('filtered')) { stab = first.dataset.stab; renderSettings(); }
+  });
   $('#backBtn').addEventListener('click', () => histStep(-1));
   $('#fwdBtn').addEventListener('click', () => histStep(1));
   $('#searchInput').addEventListener('input', (e) => { state.search = e.target.value; renderSidebar(); });
@@ -2206,7 +2480,7 @@ function bindUI() {
   $('#collapseBtn').addEventListener('click', toggleSide);
   $('#expandBtn').addEventListener('click', toggleSide);
   $('#settingsBtn').addEventListener('click', () => openSettings());
-  $('#accountBtn').addEventListener('click', () => openSettings('agents'));
+  $('#accountBtn').addEventListener('click', (e) => { e.stopPropagation(); accountMenu(); });
   $('#petsBtn').addEventListener('click', async () => { const p = state.settings.pets; await saveSettings({ pets: { ...p, enabled: !p.enabled } }); applyPets(); toast(p.enabled ? t('Питомцы ушли спать') : t('Питомцы вернулись')); });
   $('#settingsNav').addEventListener('click', (e) => { const b = e.target.closest('[data-stab]'); if (b) { stab = b.dataset.stab; renderSettings(); } });
   $$('#settingsModal [data-close]').forEach(el => el.addEventListener('click', closeSettings));

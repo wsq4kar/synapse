@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0
+
+- **Antigravity CLI** instead of Gemini CLI: Google's new agent (`agy`) with streaming steps, reasoning, subagents, token usage and session resume. It reports its own model list, and the Arena skips models it doesn't have. Old settings move over automatically.
+- **OpenRouter**: one key for hundreds of models. Chat (with reasoning and prompt caching for Claude and Gemini), task routing and image generation work through OpenRouter when there's no Gemini key, or when you pick an OpenRouter model in the menu. OpenCode gets the key for `openrouter/…` models.
+- **No more typing model names**: all model lists live in `models.json`; the app pulls a fresh copy from GitHub. The «Models» field in Settings → Agents is now optional.
+- **Fewer tokens**:
+  - Codex and Antigravity continue their own sessions like Claude Code and OpenCode — the chat history is no longer resent every turn. If a session can't be resumed, the task restarts once with a short context.
+  - History for agents without a session: code blocks from earlier answers are folded (the code is already in the files), long messages are shortened.
+  - Gemini and OpenRouter chats keep a history budget: recent messages in full, older ones shorter.
+  - Routing sends only the start of the request and turns reasoning off.
+  - Arena participants with a session don't receive the brief and their own plan again.
+- **Stats** (account menu or sidebar): tokens all time, most tokens in a day, longest task, streaks, a token activity heatmap (by day, by week, cumulative), executors and favorite models, most used reasoning level.
+- **Account menu** like in Claude: settings, stats, language, agents and models, API keys, what's new, help.
+- Settings: search, grouped sections, «API keys» tab with Gemini and OpenRouter.
+- Fixes: «Stopped» and «blocked by filter» messages from Gemini were never shown (a variable hid the translation function); pages opened scrolled to where the previous page was.
+
 ## 0.2.0
 
 - **Arena**: the large models work as a team. A small model writes the brief; Opus 5.5, GPT-6 Astra / 6.1 Sol, Gemini 4 Argon and others plan, debate until they agree (up to 3 rounds), each build their own variant in a separate copy of the folder, vote anonymously, and the winner polishes its result. Scores, diffs and an **Apply** button; other variants can be viewed and applied too. The folder is untouched until you apply, with a warning if files changed in the meantime.

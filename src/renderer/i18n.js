@@ -260,7 +260,37 @@
     'ошибка 0x01': 'error 0x01', 'перезагрузка…': 'rebooting…', 'бип!': 'beep!', 'заряжен': 'charged',
     'буль-буль…': 'blub-blub…', 'расту': 'growing', 'впитываю': 'absorbing', 'буль!': 'blub!', 'хлюп…': 'squish…', 'буль': 'blub', 'липко!': 'sticky!',
     'эй!': 'hey!', 'куда?': 'where to?', 'ой-ой': 'whoa', 'а?': 'huh?', 'проснулся': 'awake',
-  };
+  
+    // 0.4: OpenRouter, Antigravity, статистика, меню аккаунта
+    'Ключи API': 'API keys', 'Модели': 'Models', 'Приложение': 'App', 'Статистика': 'Stats',
+    'Аккаунт, статистика и настройки': 'Account, stats and settings',
+    'Добавьте ключ Google AI Studio или OpenRouter для чата, изображений и видео': 'Add a Google AI Studio or OpenRouter key for chat, images and video',
+    'OpenRouter · чат': 'OpenRouter · chat',
+    'Сотни моделей — Claude, GPT, Gemini, DeepSeek, Kimi и другие — по одному ключу. Если ключа Gemini нет, чат, маршрутизатор и изображения работают через OpenRouter. Модели openrouter/… получает и агент OpenCode.': 'Hundreds of models — Claude, GPT, Gemini, DeepSeek, Kimi and more — with one key. Without a Gemini key, chat, routing and images go through OpenRouter. The OpenCode agent gets openrouter/… models too.',
+    'Хранится только на этом компьютере в зашифрованном виде.': 'Stored only on this computer, encrypted.',
+    'Пусто — модель по умолчанию': 'Empty — default model', 'Быстрая и дешёвая модель': 'Fast and cheap model', 'Модель с выходом «изображение»': 'A model with image output',
+    'свои модели через запятую — необязательно': 'your own models, comma-separated — optional',
+    'Если по словам задача неясна, Synapse коротко спрашивает Gemini или OpenRouter': 'If the words are unclear, Synapse briefly asks Gemini or OpenRouter',
+    'Списки моделей берутся из файла models.json и обновляются с GitHub': 'Model lists come from models.json and update from GitHub',
+    'Обновить списки моделей': 'Update model lists', 'Списки моделей обновлены': 'Model lists updated',
+    'Как нейросети выходят в интернет: Gemini, OpenRouter, Claude Code, Codex, Antigravity и OpenCode.': 'How the AIs reach the internet: Gemini, OpenRouter, Claude Code, Codex, Antigravity and OpenCode.',
+    'Claude Code — в системный промпт, Gemini и OpenRouter — в системную инструкцию, Codex, Antigravity и OpenCode — в начало новой сессии.': 'Claude Code — in the system prompt, Gemini and OpenRouter — in the system instruction, Codex, Antigravity and OpenCode — at the start of a new session.',
+    'Код и файлы — Claude Code, Codex, Antigravity или OpenCode на этом компьютере, под вашим входом. Чат и изображения — Gemini API или OpenRouter по вашему ключу, видео — Gemini API.': 'Code and files — Claude Code, Codex, Antigravity or OpenCode on this computer, under your login. Chat and images — Gemini API or OpenRouter with your key, video — Gemini API.',
+    'потрачено': 'spent', 'Ключ работает': 'Key works', 'бесплатный тариф': 'free tier',
+    'Что нового': 'What’s new', 'Список изменений не найден.': 'Changelog not found.',
+    'токенов': 'tokens', 'задача': 'task', 'задачи': 'tasks', 'задач': 'tasks', 'Меньше': 'Less', 'Больше': 'More',
+    'По дням': 'By day', 'По неделям': 'By week', 'Нарастающим итогом': 'Cumulative',
+    'Токены за всё время': 'Tokens all time', 'Максимум токенов за день': 'Most tokens in a day', 'Самая длительная задача': 'Longest task',
+    'Самая длинная серия': 'Longest streak', 'Текущая серия': 'Current streak', 'день': 'day', 'дня': 'days', 'дней': 'days',
+    'С нами с {d}': 'Since {d}', 'Здесь появится ваша статистика': 'Your stats will appear here', 'Активность токенов': 'Token activity',
+    'Исполнители': 'Executors', 'Пока нет задач — статистика появится после первой.': 'No tasks yet — stats appear after the first one.',
+    'Любимые модели': 'Favorite models', 'Всего задач': 'Total tasks', 'успешно': 'successful', 'Новые токены / из кэша': 'New tokens / from cache',
+    'Токены рассуждений': 'Reasoning tokens', 'Наиболее частый уровень рассуждений': 'Most used reasoning level', 'Режим Ultra': 'Ultra mode',
+    'раз': 'times', 'раза': 'times', 'Не используется': 'Not used', 'Запусков Арены': 'Arena runs', 'Активных дней': 'Active days',
+    'Стоимость по прайсу API': 'Cost at API list prices',
+    'Считается на этом компьютере по ответам агентов и API. По подписке вы платите фиксированно — прайс показан для сравнения.': 'Counted on this computer from agent and API responses. With a subscription you pay a flat fee — list price is shown for comparison.',
+    'Агенты и модели': 'Agents and models', 'Справка и ошибки': 'Help and bug reports', 'решил маршрутизатор': 'decided by the router',
+};
 
   const I18N = {
     lang: (() => { try { return localStorage.getItem('synapse.lang') || 'ru'; } catch { return 'ru'; } })(),

@@ -36,7 +36,7 @@ const EN = {
   '(двоичный файл)': '(binary file)',
   'и ещё {n} файлов': 'and {n} more files',
   '(изменений нет)': '(no changes)',
-  'Для Арены нужен хотя бы один установленный агент: Claude Code, Codex или Gemini CLI.': 'The Arena needs at least one installed agent: Claude Code, Codex or Gemini CLI.',
+  'Для Арены нужен хотя бы один установленный агент: Claude Code, Codex или Antigravity.': 'The Arena needs at least one installed agent: Claude Code, Codex or Antigravity.',
   '{m} недоступна — пробую {n}': '{m} is unavailable — trying {n}',
   'модель по умолчанию': 'default model',
   'ошибка': 'error',
@@ -58,8 +58,8 @@ const EN = {
   'Gemini API недоступен в вашем регионе — включите VPN.': 'Gemini API is not available in your region — turn on a VPN.',
   'Папка проекта': 'Project folder',
   'Изображение': 'Image', 'Видео': 'Video',
-  'Не найден ни один CLI-агент. Установите Claude Code, Codex, Gemini CLI или OpenCode и войдите в аккаунт, затем нажмите «Проверить» в настройках.':
-    'No CLI agent found. Install Claude Code, Codex, Gemini CLI or OpenCode, sign in, then press “Check again” in settings.',
+  'Не найден ни один CLI-агент. Установите Claude Code, Codex, Antigravity или OpenCode и войдите в аккаунт, затем нажмите «Проверить» в настройках.':
+    'No CLI agent found. Install Claude Code, Codex, Antigravity or OpenCode, sign in, then press “Check again” in settings.',
   'Приложенные изображения:': 'Attached images:',
   'Остановлено': 'Stopped',
   'не установлен': 'not installed', 'лимит подписки': 'subscription limit', 'ошибка': 'error',
@@ -82,6 +82,15 @@ const EN = {
   'Модель не вернула изображение': 'The model returned no image',
   'Генерация видео идёт дольше 12 минут — остановлено': 'Video generation took over 12 minutes — stopped',
   'Veo вернул ошибку': 'Veo returned an error', 'Видео отфильтровано: {r}': 'Video filtered: {r}', 'Veo не вернул видео': 'Veo returned no video',
+  // OpenRouter, Antigravity, сессии
+  'Не задан ключ OpenRouter. Добавьте его в настройках.': 'No OpenRouter key set. Add it in settings.',
+  'Нет связи с OpenRouter ({m}). Проверьте прокси или VPN в настройках «Сеть».': 'Cannot reach OpenRouter ({m}). Check the proxy or VPN in Settings → Network.',
+  'На счёте OpenRouter закончились кредиты': 'Your OpenRouter credits have run out', 'Запрос заблокирован модерацией': 'Request blocked by moderation',
+  'Модель не ответила вовремя': 'The model timed out', 'Провайдер модели недоступен, попробуйте другую модель': 'The model provider is unavailable, try another model',
+  'Нет доступного провайдера для этой модели': 'No provider is available for this model', 'Ошибка OpenRouter': 'OpenRouter error',
+  'OpenRouter недоступен': 'OpenRouter is unavailable',
+  'Новая сессия': 'New session', 'Прошлую сессию продолжить не удалось — начинаю заново с кратким контекстом': 'Could not resume the previous session — starting over with a short context',
+  'Antigravity: {s}': 'Antigravity: {s}', 'решил маршрутизатор': 'decided by the router',
 };
 
 function t(s, vars) {

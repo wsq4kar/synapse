@@ -32,6 +32,7 @@
         <button class="nav-item" id="navNew"><span data-icon="plus"></span><span class="lbl">Новый чат</span><kbd>Ctrl N</kbd></button>
         <button class="nav-item" id="navProjects"><span data-icon="folders"></span><span>Проекты</span></button>
         <button class="nav-item" id="navMedia"><span data-icon="images"></span><span>Медиа</span></button>
+        <button class="nav-item" id="navStats"><span data-icon="chart"></span><span>Статистика</span></button>
       </nav>
 
       <div class="side-scroll" id="sideScroll">
@@ -46,7 +47,7 @@
       </div>
 
       <div class="side-bottom">
-        <button class="account" id="accountBtn" title="Исполнители и настройки">
+        <button class="account" id="accountBtn" title="Аккаунт, статистика и настройки">
           <span class="avatar" id="avatar">S</span>
           <span class="acc-name" id="accName">user</span>
           <span class="acc-dots" id="agentDots"></span>
@@ -82,7 +83,7 @@
 
         <div class="dock" id="dock">
           <button class="key-notice hidden" id="keyBanner">
-            <span data-icon="key"></span><span>Добавьте ключ Google AI Studio для чата, изображений и видео</span><span data-icon="chevronRight"></span>
+            <span data-icon="key"></span><span>Добавьте ключ Google AI Studio или OpenRouter для чата, изображений и видео</span><span data-icon="chevronRight"></span>
           </button>
           <div class="composer" id="composer">
             <div class="ultra-ring"></div>
@@ -139,14 +140,18 @@
     <div class="modal" role="dialog" aria-label="Настройки">
       <nav class="modal-nav" id="settingsNav">
         <div class="modal-title">Настройки</div>
-        <button data-stab="api" class="active"><span data-icon="key"></span>Gemini API</button>
+        <label class="search s-search"><span data-icon="search"></span><input id="settingsSearch" placeholder="Поиск" spellcheck="false"></label>
+        <div class="nav-group">Модели</div>
+        <button data-stab="api" class="active"><span data-icon="key"></span>Ключи API</button>
         <button data-stab="agents"><span data-icon="bot"></span>Агенты</button>
-        <button data-stab="look"><span data-icon="monitor"></span>Внешний вид</button>
-        <button data-stab="net"><span data-icon="globe"></span>Сеть</button>
         <button data-stab="memory"><span data-icon="brain"></span>Память</button>
+        <div class="nav-group">Приложение</div>
+        <button data-stab="look"><span data-icon="monitor"></span>Внешний вид</button>
         <button data-stab="pets"><span data-icon="paw"></span>Питомцы</button>
+        <button data-stab="net"><span data-icon="globe"></span>Сеть</button>
         <button data-stab="log"><span data-icon="list"></span>Журнал</button>
         <button data-stab="about"><span data-icon="info"></span>О программе</button>
+        <div class="s-empty hidden" id="settingsEmpty">Ничего не найдено</div>
       </nav>
       <div class="modal-body" id="settingsBody"></div>
       <button class="icon-btn modal-close" data-close data-icon="x"></button>

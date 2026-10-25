@@ -6,7 +6,7 @@ const path = require('path');
 const DEFAULT_SETTINGS = {
   theme: 'system',                 // system | light | dark
   smartRouting: true,              // спрашивать Gemini, если по словам непонятно
-  codeExecutors: ['claude', 'codex', 'gemini-cli', 'opencode'], // порядок фолбэка
+  codeExecutors: ['claude', 'codex', 'antigravity', 'opencode'], // порядок фолбэка
   agentAccess: 'edits',            // edits — только правки файлов; full — полный доступ
   models: {
     chat: 'gemini-2.5-flash',
@@ -17,6 +17,8 @@ const DEFAULT_SETTINGS = {
     videoUltra: 'veo-3.0-generate-001',
   },
   modelsAutoPicked: false,
+  // OpenRouter: пусто — модель из models.json
+  openrouter: { chat: '', chatUltra: '', router: '', image: '' },
   net: { mode: 'http', http: '127.0.0.1:10801', strict: true }, // как нейросети выходят в интернет: system | http | ssh
   tunnel: { enabled: false, host: '', user: 'root', port: 22, key: '' }, // Gemini через SSH-сервер
   modelsPicked2: false,
@@ -35,15 +37,9 @@ const DEFAULT_SETTINGS = {
   windowBounds: null,
   videoAspect: '16:9',
   workspaceRoot: '',               // пусто = Документы/Synapse
-  cliPaths: { claude: '', codex: '', 'gemini-cli': '', opencode: '' }, // пусто = автопоиск
-  // модели, которые можно выбрать для каждого CLI (флаг --model / -m)
-  cliModels: {
-    claude: 'claude-fable-5-1, claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5, claude-opus-5, claude-sonnet-5',
-    codex: 'gpt-6.1-sol, gpt-6-astra, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5',
-    'gemini-cli': '', // пусто — список берётся из моделей Gemini API по ключу
-    // OpenCode: любые провайдеры в виде provider/model; бесплатные модели OpenCode Zen работают без входа
-    opencode: 'opencode/deepseek-v4.1-flash-free, opencode/glm-5.3-flash-free, opencode/big-pickle',
-  },
+  cliPaths: { claude: '', codex: '', antigravity: '', opencode: '' }, // пусто = автопоиск
+  // Свои модели сверх списка из models.json (через запятую). Обычно пусто — список приложение берёт само.
+  cliModels: { claude: '', codex: '', antigravity: '', opencode: '' },
   sidebarCollapsed: false,
   lang: '',
 };
@@ -89,11 +85,29 @@ function getSettings() {
   if (!s.workspaceRoot) s.workspaceRoot = path.join(app.getPath('documents'), 'Synapse');
   // старые версии писали просто имя команды — теперь пусто = автопоиск
   // новые исполнители — в конец очереди у тех, кто уже настроил порядок
+  migrateGeminiCli(s);
   for (const id of DEFAULT_SETTINGS.codeExecutors) if (!s.codeExecutors.includes(id)) s.codeExecutors.push(id);
-  const bare = { claude: ['claude'], codex: ['codex'], 'gemini-cli': ['gemini', 'gemini-cli'], opencode: ['opencode'] };
+  // старые списки моделей по умолчанию теперь живут в models.json
+  for (const [id, v] of Object.entries(s.cliModels || {})) if (OLD_MODEL_DEFAULTS.has(String(v).replace(/\s+/g, ''))) s.cliModels[id] = '';
+  const bare = { claude: ['claude'], codex: ['codex'], antigravity: ['agy', 'antigravity'], opencode: ['opencode'] };
   for (const [id, names] of Object.entries(bare)) if (names.includes((s.cliPaths?.[id] || '').trim())) s.cliPaths[id] = '';
   return s;
 }
+// Gemini CLI заменён на Antigravity CLI: переносим порядок, Арену и убираем старые поля
+function migrateGeminiCli(s) {
+  s.codeExecutors = [...new Set((s.codeExecutors || []).map(id => (id === 'gemini-cli' ? 'antigravity' : id)))];
+  if (s.cliPaths) delete s.cliPaths['gemini-cli'];
+  if (s.cliModels) delete s.cliModels['gemini-cli'];
+  if (s.arena) {
+    if (Array.isArray(s.arena.roster)) s.arena.roster = s.arena.roster.map(r => (r?.agent === 'gemini-cli' ? { ...r, agent: 'antigravity', model: null } : r));
+    if (s.arena.dispatcher?.agent === 'gemini-cli') s.arena.dispatcher = null;
+  }
+}
+const OLD_MODEL_DEFAULTS = new Set([
+  'claude-fable-5-1,claude-opus-5-5,claude-sonnet-5-5,claude-haiku-5-5,claude-opus-5,claude-sonnet-5',
+  'gpt-6.1-sol,gpt-6-astra,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5',
+  'opencode/deepseek-v4.1-flash-free,opencode/glm-5.3-flash-free,opencode/big-pickle',
+]);
 function setSettings(patch) {
   const next = deepMerge(getSettings(), patch);
   writeJson(path.join(dirs().root, 'settings.json'), next);
@@ -114,6 +128,12 @@ function writeSecrets(obj) {
   const text = JSON.stringify(obj);
   const data = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(text) : Buffer.from(text);
   fs.writeFileSync(secretsFile(), data);
+}
+function getOpenRouterKey() { return readSecrets().openrouter || process.env.OPENROUTER_API_KEY || ''; }
+function setOpenRouterKey(key) {
+  const s = readSecrets();
+  if (key) s.openrouter = String(key).trim(); else delete s.openrouter;
+  writeSecrets(s);
 }
 function getGeminiKey() { return readSecrets().gemini || process.env.GEMINI_API_KEY || ''; }
 function setGeminiKey(key) {
@@ -197,8 +217,96 @@ function mediaDir(chatId) {
   fs.mkdirSync(d, { recursive: true });
   return d;
 }
+// Токены задачи в компактном виде: in — новые входные, cr/cw — чтение/запись кэша, out — ответ, th — рассуждения
+function compactTokens(u, executor) {
+  if (!u) return null;
+  const n = (v) => Math.max(0, Math.round(Number(v) || 0));
+  const tk = { in: n(u.input), cr: n(u.cacheRead), cw: n(u.cacheWrite), out: n(u.output), th: n(u.thinking) };
+  // у Gemini рассуждения не входят в output, у Claude/Codex — входят
+  tk.total = tk.in + tk.cr + tk.cw + tk.out + (['gemini', 'antigravity'].includes(executor) ? tk.th : 0);
+  return tk.total ? tk : null;
+}
 function logUsage(entry) {
-  fs.appendFileSync(path.join(dirs().logs, 'usage.jsonl'), JSON.stringify({ t: Date.now(), ...entry }) + '\n');
+  const { usage, ...rest } = entry || {};
+  const tk = compactTokens(usage, rest.executor);
+  if (tk) { rest.tk = tk; if (!rest.model && usage?.model) rest.model = usage.model; if (rest.cost == null && typeof usage?.listCost === 'number') rest.cost = usage.listCost; }
+  fs.appendFileSync(path.join(dirs().logs, 'usage.jsonl'), JSON.stringify({ t: Date.now(), ...rest }) + '\n');
+}
+
+// ---------- статистика (как в Codex: токены за всё время, серии, активность) ----------
+const dayKey = (ts) => { const d = new Date(ts); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+function readAllUsage() {
+  try {
+    return fs.readFileSync(path.join(dirs().logs, 'usage.jsonl'), 'utf8').split('\n').map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  } catch { return []; }
+}
+// Задачи до появления статистики берём из сохранённых чатов (там у ответов уже есть токены)
+function backfill(since) {
+  const file = path.join(dirs().logs, 'usage-backfill.jsonl');
+  try { return fs.readFileSync(file, 'utf8').split('\n').map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); } catch { /* ещё не собрано */ }
+  const out = [];
+  for (const c of listChats()) {
+    const full = getChat(c.id);
+    for (const m of full?.messages || []) {
+      if (m.role !== 'assistant' || !m.at || m.at >= since) continue;
+      if (m.status !== 'done' && m.status !== 'error') continue;
+      const tk = compactTokens(m.usage, m.executor);
+      out.push({ t: m.at, route: m.route || null, executor: m.executor || null, model: m.usage?.model || null, ok: m.status === 'done', ms: m.ms || null, ultra: !!m.ultra, arena: m.executor === 'arena', ...(tk ? { tk } : {}) });
+    }
+  }
+  try { fs.writeFileSync(file, out.map(x => JSON.stringify(x)).join('\n')); } catch { /* не критично */ }
+  return out;
+}
+function usageStats() {
+  let s = getSettings();
+  if (!s.statsSince) s = setSettings({ statsSince: Date.now() });
+  const since = s.statsSince;
+  // старые записи журнала без токенов заменяет перенос из чатов; новые (с tk) учитываем всегда
+  const rows = [...backfill(since), ...readAllUsage().filter(r => r.t >= since || r.tk)];
+  const days = {};
+  const by = {}, models = {}, efforts = {};
+  let total = 0, fresh = 0, cache = 0, thinking = 0, tasks = 0, okCount = 0, longest = null, cost = 0, ultra = 0, arena = 0;
+  for (const r of rows) {
+    const k = dayKey(r.t);
+    const d = days[k] || (days[k] = { tokens: 0, tasks: 0 });
+    const tok = r.tk?.total || 0;
+    d.tokens += tok; d.tasks++;
+    total += tok; fresh += (r.tk?.in || 0) + (r.tk?.out || 0); cache += (r.tk?.cr || 0) + (r.tk?.cw || 0); thinking += r.tk?.th || 0;
+    tasks++; if (r.ok !== false) okCount++;
+    if (r.ms && (!longest || r.ms > longest.ms)) longest = { ms: r.ms, at: r.t, executor: r.executor || null };
+    if (typeof r.cost === 'number') cost += r.cost;
+    if (r.ultra) ultra++;
+    if (r.arena) arena++;
+    const ex = r.executor || r.route || 'other';
+    const b = by[ex] || (by[ex] = { tasks: 0, tokens: 0 });
+    b.tasks++; b.tokens += tok;
+    if (r.model) { const m = models[r.model] || (models[r.model] = { tasks: 0, tokens: 0, executor: r.executor || null }); m.tasks++; m.tokens += tok; }
+    if (r.effort) efforts[r.effort] = (efforts[r.effort] || 0) + 1;
+  }
+  // серии дней подряд
+  const keys = Object.keys(days).sort();
+  let best = 0, run = 0, prev = null;
+  for (const k of keys) {
+    const cur = new Date(k + 'T12:00:00');
+    run = prev && Math.round((cur - prev) / 86400000) === 1 ? run + 1 : 1;
+    best = Math.max(best, run);
+    prev = cur;
+  }
+  let current = 0;
+  for (let d = new Date(); ; d.setDate(d.getDate() - 1)) {
+    if (days[dayKey(d)]) current++;
+    else if (current || dayKey(d) !== dayKey(Date.now())) break; // сегодня ещё можно успеть
+  }
+  const maxDay = keys.reduce((a, k) => (days[k].tokens > a.tokens ? { day: k, tokens: days[k].tokens } : a), { day: null, tokens: 0 });
+  const topEffort = Object.entries(efforts).sort((a, b) => b[1] - a[1])[0] || null;
+  const effortTotal = Object.values(efforts).reduce((a, b) => a + b, 0);
+  return {
+    total, fresh, cache, thinking, tasks, ok: okCount, cost, ultra, arena, longest, maxDay,
+    streak: { best, current }, activeDays: keys.length, first: rows.length ? Math.min(...rows.map(r => r.t)) : null,
+    days, byExecutor: by,
+    models: Object.entries(models).sort((a, b) => b[1].tokens - a[1].tokens || b[1].tasks - a[1].tasks).slice(0, 8).map(([id, v]) => ({ id, ...v })),
+    effort: topEffort ? { level: topEffort[0], share: Math.round(topEffort[1] / effortTotal * 100) } : null,
+  };
 }
 function readUsage(limit = 200) {
   try {
@@ -208,7 +316,7 @@ function readUsage(limit = 200) {
 }
 
 module.exports = {
-  dirs, getSettings, setSettings, getGeminiKey, setGeminiKey,
-  listChats, getChat, saveChat, deleteChat, mediaDir, logUsage, readUsage,
+  dirs, getSettings, setSettings, getGeminiKey, setGeminiKey, getOpenRouterKey, setOpenRouterKey,
+  listChats, getChat, saveChat, deleteChat, mediaDir, logUsage, readUsage, usageStats,
   listProjects, saveProject, deleteProject, listMedia, recentFolders,
 };

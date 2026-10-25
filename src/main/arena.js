@@ -10,31 +10,21 @@ const cli = require('./executors/cli');
 const { t } = require('./i18n');
 
 // ---------- модели ----------
-// Порядок — по силе в коде (BenchLM, октябрь 2026). big — участники, small — диспетчер.
-const MODELS = [
-  { model: 'claude-opus-5-5', agent: 'claude', tier: 'big' },
-  { model: 'claude-fable-5-1', agent: 'claude', tier: 'big' },
-  { model: 'gpt-6-astra', agent: 'codex', tier: 'big' },
-  { model: 'gemini-4-argon', agent: 'gemini-cli', tier: 'big' },
-  { model: 'gpt-6.1-sol', agent: 'codex', tier: 'big' },
-  { model: 'claude-opus-5', agent: 'claude', tier: 'big' },
-  { model: 'gpt-5.5', agent: 'codex', tier: 'big' },
-  { model: 'claude-haiku-5-5', agent: 'claude', tier: 'small' },
-  { model: 'claude-sonnet-5-5', agent: 'claude', tier: 'small' },
-  { model: 'gpt-5.6-luna', agent: 'codex', tier: 'small' },
-  { model: 'gpt-5.6-sol', agent: 'codex', tier: 'small' },
-  { model: 'gemini-3.8-flash', agent: 'gemini-cli', tier: 'small' },
-  { model: 'opencode/deepseek-v4.1-flash-free', agent: 'opencode', tier: 'small' },
-];
-const BIG_AGENTS = ['claude', 'codex', 'gemini-cli']; // OpenCode — только вручную
+// Список и порядок (по силе в коде) — в models.json, раздел arena. big — участники, small — диспетчер.
+const catalog = require('./catalog');
+const modelsList = () => catalog.get().arena;
+const BIG_AGENTS = ['claude', 'codex', 'antigravity']; // OpenCode — только вручную
 const DEFAULTS = { auto: true, rounds: 3, maxBig: 3, roster: [], dispatcher: null };
 
 function cfgOf(settings) { return { ...DEFAULTS, ...(settings.arena || {}) }; }
 
-// Запасные модели того же агента — если выбранной нет в подписке
-function candidatesFor(agent, model, tier) {
-  const same = MODELS.filter(m => m.agent === agent && m.tier === tier).map(m => m.model);
-  return [model, ...same.filter(m => m !== model), null]; // null = модель по умолчанию в CLI
+// Запасные модели того же агента — если выбранной нет в подписке.
+// Если CLI сообщил список доступных моделей (Antigravity), недоступные сразу пропускаем.
+function candidatesFor(agent, model, tier, available) {
+  const same = modelsList().filter(m => m.agent === agent && m.tier === tier).map(m => m.model);
+  let list = [model, ...same.filter(m => m !== model)].filter(Boolean);
+  if (available?.length) list = list.filter(m => available.includes(m));
+  return [...new Set(list), null]; // null = модель по умолчанию в CLI
 }
 
 /** Состав: участники (большие модели) и диспетчер (маленькая). */
@@ -47,12 +37,12 @@ function roster(settings, agents) {
   } else {
     // сначала по одной сильнейшей модели от каждого агента — разные «школы» спорят полезнее
     big = [];
-    for (const m of MODELS.filter(x => x.tier === 'big' && BIG_AGENTS.includes(x.agent) && installed.has(x.agent))) {
+    for (const m of modelsList().filter(x => x.tier === 'big' && BIG_AGENTS.includes(x.agent) && installed.has(x.agent))) {
       if (!big.some(b => b.agent === m.agent)) big.push({ agent: m.agent, model: m.model });
     }
     // мало агентов — добираем до лимита их следующими по силе моделями
     const want = Math.max(2, Math.min(4, cfg.maxBig || 3));
-    for (const m of MODELS.filter(x => x.tier === 'big' && BIG_AGENTS.includes(x.agent) && installed.has(x.agent))) {
+    for (const m of modelsList().filter(x => x.tier === 'big' && BIG_AGENTS.includes(x.agent) && installed.has(x.agent))) {
       if (big.length >= want) break;
       if (!big.some(b => b.model === m.model)) big.push({ agent: m.agent, model: m.model });
     }
@@ -60,15 +50,15 @@ function roster(settings, agents) {
   big = big.slice(0, cfg.auto === false && cfg.roster?.length ? 4 : Math.max(1, Math.min(4, cfg.maxBig || 3)));
   let disp = cfg.dispatcher && installed.has(cfg.dispatcher.agent) ? cfg.dispatcher : null;
   if (!disp) {
-    const s = MODELS.find(x => x.tier === 'small' && installed.has(x.agent) && x.agent !== 'opencode')
-      || MODELS.find(x => x.tier === 'small' && installed.has(x.agent));
+    const s = modelsList().find(x => x.tier === 'small' && installed.has(x.agent) && x.agent !== 'opencode')
+      || modelsList().find(x => x.tier === 'small' && installed.has(x.agent));
     disp = s ? { agent: s.agent, model: s.model } : (big[0] ? { ...big[0] } : null);
   }
   return {
     participants: big.map((b, i) => ({ id: `p${i + 1}`, agent: b.agent, model: b.model, label: cli.LABELS[b.agent] })),
     dispatcher: disp ? { id: 'd', agent: disp.agent, model: disp.model, label: cli.LABELS[disp.agent] } : null,
     rounds: Math.max(1, Math.min(5, cfg.rounds || 3)),
-    models: MODELS,
+    models: modelsList(),
   };
 }
 
@@ -199,7 +189,7 @@ function addUsage(a, u) {
   for (const k of ['input', 'cacheRead', 'cacheWrite', 'output', 'thinking']) a[k] = (a[k] || 0) + (u[k] || 0);
   return a;
 }
-const MODEL_MISSING = /model[^\n]{0,80}(not (found|supported|available|exist)|does not exist|unknown|invalid|unsupported)|unsupported model|not_found_error|no such model|model_not_found/i;
+const MODEL_MISSING = /model[^\n]{0,80}(not (found|supported|available|exist)|does not exist|unknown|invalid|unsupported)|(unknown|unsupported|invalid) model|not_found_error|no such model|model_not_found/i;
 
 // ---------- промпты ----------
 const LANG = 'Write your answer in the same language as the user task.';
@@ -222,39 +212,29 @@ Do NOT modify files yet. Read the brief and the project, then propose your imple
 BRIEF:
 ${brief}`,
 
+  // mine = null: участник продолжает свою сессию и помнит свой план — не пересылаем его заново
   debate: (me, round, maxR, mine, others) => `Arena debate, round ${round} of ${maxR}. You are ${me}. Do NOT modify files.
 Below are the current plans of the other engineers. Criticise them honestly (bugs, missed requirements, over-engineering, risks), defend or improve your own plan, and adopt good ideas from others.
 Output your REVISED plan (max 400 words). ${LANG}
 On the very last line output only a JSON object:
 {"agree": true or false, "objections": ["short objection", "..."]}
 "agree": true means you have no significant objections left and the team is ready to implement.
-
-YOUR CURRENT PLAN:
-${mine}
-
+${mine ? `\nYOUR CURRENT PLAN:\n${mine}\n` : '\nYour current plan is your previous answer in this conversation.\n'}
 OTHER PLANS:
 ${others}`,
 
+  // brief/plan = null: они уже есть в сессии участника
   build: (brief, plan, objections) => `Implement the task now in the current folder. This folder is your own copy of the project; other engineers implement their own variants in parallel and will review yours.
 Follow your final plan, respect the brief's acceptance criteria and address the objections raised in the debate. Make it complete and working; run the project's checks or tests if there are any.
 Finish with a short summary of what you changed (max 150 words). ${LANG}
-
-BRIEF:
-${brief}
-
-YOUR FINAL PLAN:
-${plan}
-${objections ? `\nOBJECTIONS FROM THE DEBATE:\n${objections}\n` : ''}`,
+${brief ? `\nBRIEF:\n${brief}\n` : '\nThe brief is earlier in this conversation.\n'}${plan ? `\nYOUR FINAL PLAN:\n${plan}\n` : 'Your final plan is your last revised plan in this conversation.\n'}${objections ? `\nOBJECTIONS FROM THE DEBATE:\n${objections}\n` : ''}`,
 
   vote: (brief, variants, letters) => `Arena vote. Do NOT modify files. Below are anonymous variants (diffs against the original project) produced by the other engineers.
 Evaluate each against the brief's acceptance criteria: correctness, completeness, code quality, risk of regressions.
 Give each variant a score from 1 to 10 and list concrete fixes it needs. Write a short justification, then on the very last line output only a JSON object:
 {"scores": {${letters.map(l => `"${l}": 0`).join(', ')}}, "fixes": {${letters.map(l => `"${l}": ["..."]`).join(', ')}}}
 ${LANG}
-
-BRIEF:
-${brief}
-
+${brief ? `\nBRIEF:\n${brief}\n` : '\nThe brief is earlier in this conversation.\n'}
 VARIANTS:
 ${variants}`,
 
@@ -272,7 +252,8 @@ Then give a short final summary for the user: what was built and how to use or c
 async function run(opts) {
   const { settings, agents, text, cwd, root, extraEnv, signal, emit } = opts;
   const R = roster(settings, agents);
-  if (!R.participants.length) throw Object.assign(new Error(t('Для Арены нужен хотя бы один установленный агент: Claude Code, Codex или Gemini CLI.')), { code: 'arena' });
+  if (!R.participants.length) throw Object.assign(new Error(t('Для Арены нужен хотя бы один установленный агент: Claude Code, Codex или Antigravity.')), { code: 'arena' });
+  const avail = (agent) => (agents || []).find(a => a.id === agent)?.models || null;
 
   const runId = `a${Date.now().toString(36)}`;
   const runDir = path.join(root, runId);
@@ -280,8 +261,8 @@ async function run(opts) {
   fs.mkdirSync(runDir, { recursive: true });
 
   const ev = (o) => emit({ kind: 'arena', ...o });
-  const parts = R.participants.map(p => ({ ...p, cand: candidatesFor(p.agent, p.model, 'big'), dir: path.join(runDir, p.id), session: null, alive: true, plan: '', summary: '', usage: {} }));
-  const disp = R.dispatcher ? { ...R.dispatcher, cand: candidatesFor(R.dispatcher.agent, R.dispatcher.model, 'small'), dir: path.join(runDir, 'brief'), session: null, alive: true, usage: {} } : null;
+  const parts = R.participants.map(p => ({ ...p, cand: candidatesFor(p.agent, p.model, 'big', avail(p.agent)), dir: path.join(runDir, p.id), session: null, alive: true, plan: '', summary: '', usage: {} }));
+  const disp = R.dispatcher ? { ...R.dispatcher, cand: candidatesFor(R.dispatcher.agent, R.dispatcher.model, 'small', avail(R.dispatcher.agent)), dir: path.join(runDir, 'brief'), session: null, alive: true, usage: {} } : null;
   const total = {};
   const bigEffort = opts.input.ultra ? 'max' : 'xhigh';
 
@@ -304,7 +285,7 @@ async function run(opts) {
       const model = p.cand[0];
       const r = await cli.run({
         id: p.agent, bin: cli.binFor(p.agent, settings.cliPaths), cwd: p.dir, prompt, access,
-        sessionId: keepSession && ['claude', 'opencode'].includes(p.agent) ? p.session : null,
+        sessionId: keepSession && cli.RESUMABLE.has(p.agent) ? p.session : null,
         model, effort, ultra: false, extraEnv, signal,
         onEvent: (e) => {
           if (e.kind === 'step' && e.title) ev({ type: 'part', pid: p.id, stage, activity: `${e.title}${e.detail ? ' ' + e.detail : ''}`.slice(0, 140) });
@@ -321,6 +302,7 @@ async function run(opts) {
       }
       if (MODEL_MISSING.test(r.error || '') && p.cand.length > 1) {
         p.cand.shift();
+        p.session = null; // сессия была у другой модели — следующий шаг получит полный контекст
         ev({ type: 'part', pid: p.id, stage, activity: t('{m} недоступна — пробую {n}', { m: model || t('модель по умолчанию'), n: p.cand[0] || t('модель по умолчанию') }) });
         continue;
       }
@@ -344,6 +326,8 @@ async function run(opts) {
   // 2. планы
   ev({ type: 'stage', stage: 'plan' });
   const name = (p) => `${p.label}${p.model ? ` (${p.model})` : ''}`;
+  // у участника есть своя сессия: бриф и его план уже в ней — не пересылаем (экономия токенов)
+  const inSession = (p) => !!p.session && cli.RESUMABLE.has(p.agent);
   await Promise.all(parts.map(async p => {
     const out = await step(p, 'plan', P.plan(name(p), parts.length, brief), { effort: bigEffort, access: p.agent === 'codex' ? 'read' : settings.agentAccess });
     if (out) { p.plan = clip(out, 5000); ev({ type: 'plan', pid: p.id, round: 0, text: p.plan }); }
@@ -358,7 +342,7 @@ async function run(opts) {
       const live = alive();
       const res = await Promise.all(live.map(async p => {
         const others = live.filter(o => o !== p).map(o => `### ${name(o)}\n${o.plan}`).join('\n\n');
-        const out = await step(p, 'debate', P.debate(name(p), round, R.rounds, p.plan, others), { effort: bigEffort, access: p.agent === 'codex' ? 'read' : settings.agentAccess });
+        const out = await step(p, 'debate', P.debate(name(p), round, R.rounds, inSession(p) ? null : p.plan, others), { effort: bigEffort, access: p.agent === 'codex' ? 'read' : settings.agentAccess });
         if (!out) return null;
         const j = lastJson(out) || {};
         const agree = j.agree === true;
@@ -378,7 +362,7 @@ async function run(opts) {
   ev({ type: 'stage', stage: 'build' });
   const allObj = (p) => Object.entries(objections).filter(([id]) => id !== p.id).flatMap(([, list]) => list).map(o => `- ${o}`).join('\n');
   await Promise.all(alive().map(async p => {
-    const out = await step(p, 'build', P.build(brief, p.plan, allObj(p)), { effort: bigEffort });
+    const out = await step(p, 'build', P.build(inSession(p) ? null : brief, inSession(p) ? null : p.plan, allObj(p)), { effort: bigEffort });
     if (out) { p.summary = clip(out, 3000); p.files = changes(snap, p.dir); ev({ type: 'built', pid: p.id, summary: p.summary, files: p.files.map(f => ({ rel: f.rel, kind: f.kind })) }); }
   }));
   need(1);
@@ -399,7 +383,7 @@ async function run(opts) {
       const others = live.filter(o => o !== voter);
       const letters = others.map((_, i) => String.fromCharCode(65 + i));
       const variants = others.map((o, i) => `## Variant ${letters[i]}\nSummary from its author:\n${clip(o.summary, 800)}\n\n${variantText(cwd, o.dir, o.files, Math.floor(36000 / others.length))}`).join('\n\n');
-      const out = await step(voter, 'vote', P.vote(brief, variants, letters), { effort: 'high', access: voter.agent === 'codex' ? 'read' : settings.agentAccess });
+      const out = await step(voter, 'vote', P.vote(inSession(voter) ? null : brief, variants, letters), { effort: 'high', access: voter.agent === 'codex' ? 'read' : settings.agentAccess });
       const j = lastJson(out) || {};
       const given = {};
       others.forEach((o, i) => {
@@ -491,4 +475,4 @@ function cleanup(root, keep) {
   } catch { /* папки ещё нет */ }
 }
 
-module.exports = { run, roster, apply, variantFiles, variantDir, MODELS, unified, lastJson, changes, snapshot };
+module.exports = { run, roster, apply, variantFiles, variantDir, unified, lastJson, changes, snapshot };
