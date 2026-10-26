@@ -172,7 +172,7 @@ function openLogin(id, paths = {}, extraEnv = null) {
   const bin = binFor(id, paths);
   if (!SAFE_ARG.test(bin)) throw new Error(t('Недопустимые символы в пути'));
   const cmd = [IS_WIN && /\s/.test(bin) ? `"${bin}"` : bin, ...LOGIN[id]].join(' ');
-  if (IS_WIN) spawn('cmd.exe', ['/c', 'start', '""', 'cmd.exe', '/k', cmd], { detached: true, windowsHide: false, env: { ...cleanEnv(), ...(extraEnv || {}) } }).unref();
+  if (IS_WIN) spawn('cmd.exe', ['/c', 'start', '""', 'cmd.exe', '/k', cmd], { detached: true, windowsHide: false, env: envForAgent(id, { ...cleanEnv(), ...(extraEnv || {}) }) }).unref();
   else if (process.platform === 'darwin') spawn('osascript', ['-e', `tell application "Terminal" to do script "${cmd}"`], { detached: true }).unref();
   else spawn('x-terminal-emulator', ['-e', cmd], { detached: true }).unref();
 }
@@ -183,7 +183,7 @@ function detect(paths = {}) {
     const bin = binFor(id, paths);
     const base = { id, label: LABELS[id], custom: !!paths[id], bin };
     if (!SAFE_ARG.test(bin)) return resolve({ ...base, installed: false, version: null, error: t('Недопустимые символы в пути') });
-    const opts = { timeout: 15000, shell: IS_WIN, windowsHide: true, env: cleanEnv() };
+    const opts = { timeout: 15000, shell: IS_WIN, windowsHide: true, env: envForAgent(id, cleanEnv()) };
     execFile(shellBin(bin), ['--version'], opts, (err, stdout, stderr) => {
       const v = (stdout || stderr || '').trim().split('\n')[0];
       const ok = !err && !!v;
@@ -199,6 +199,51 @@ function detect(paths = {}) {
       });
     });
   })));
+}
+
+// ---------- обход Antigravity (AGUnlocker, github.com/confeden/Antigravity) ----------
+// Обход патчит agy: вместо https_proxy он читает AG_LS_PROXY — локальный сервис обхода (http://127.0.0.1:53129).
+// Переменную обход пишет в окружение пользователя (Windows) или в ~/.config/environment.d (Linux).
+// Если отдать agy ещё и HTTPS_PROXY из настроек Synapse, запросы уйдут мимо обхода, и Google ответит
+// 400 «User location is not supported». Поэтому при установленном обходе agy получает только AG_LS_PROXY.
+const AGU_VAR = 'AG_LS_PROXY';
+const AGU_VALUE = /^https?:\/\/(127\.\d+\.\d+\.\d+|localhost|\[::1\]):\d{2,5}\/?$/i;
+let aguCache = { at: 0, value: null };
+function readRegEnv(name) {
+  // Synapse мог быть запущен раньше, чем обход записал переменную, — читаем её прямо из реестра
+  for (const key of ['HKCU\\Environment', 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment']) {
+    try {
+      const out = require('child_process').execFileSync('reg', ['query', key, '/v', name], { encoding: 'utf8', timeout: 3000, windowsHide: true });
+      const m = new RegExp(`${name}\\s+REG_\\w+\\s+(.+)`, 'i').exec(out);
+      if (m) return m[1].trim();
+    } catch { /* нет такой переменной */ }
+  }
+  return null;
+}
+function readEnvironmentD(name) {
+  const dir = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'environment.d');
+  try {
+    for (const f of fs.readdirSync(dir).filter(x => x.endsWith('.conf'))) {
+      const m = new RegExp(`^\\s*${name}\\s*=\\s*"?([^"\\r\\n]+)"?`, 'm').exec(fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (m) return m[1].trim();
+    }
+  } catch { /* папки нет */ }
+  return null;
+}
+function unlockerProxy() {
+  if (Date.now() - aguCache.at < 20000) return aguCache.value;
+  const raw = (IS_WIN ? readRegEnv(AGU_VAR) : readEnvironmentD(AGU_VAR)) || process.env[AGU_VAR] || null;
+  aguCache = { at: Date.now(), value: raw && AGU_VALUE.test(raw) ? raw : null };
+  return aguCache.value;
+}
+// Окружение конкретного агента: Antigravity с обходом — без прокси Synapse, с AG_LS_PROXY
+function envForAgent(id, env) {
+  if (id !== 'antigravity') return env;
+  const agu = unlockerProxy();
+  if (!agu) return env;
+  for (const k of Object.keys(env)) if (/^(https?|all)_proxy$/i.test(k)) delete env[k];
+  env[AGU_VAR] = agu;
+  return env;
 }
 
 function cleanEnv() {
@@ -245,7 +290,10 @@ function runOnce({ id, bin, prompt, cwd, access, sessionId, ultra, model, effort
     const parser = built.parser;
     // ключ OpenRouter нужен только OpenCode (модели openrouter/…), остальным агентам его не отдаём
     const { OPENROUTER_API_KEY: orKey, ...shared } = extraEnv || {};
-    const env = { ...cleanEnv(), ...shared, ...(id === 'opencode' && orKey ? { OPENROUTER_API_KEY: orKey } : {}) };
+    const env = envForAgent(id, { ...cleanEnv(), ...shared, ...(id === 'opencode' && orKey ? { OPENROUTER_API_KEY: orKey } : {}) });
+    if (id === 'antigravity' && env[AGU_VAR] && !drop.length) {
+      onEvent?.({ kind: 'step', id: 'agy-unlocker', status: 'done', title: t('Обход Antigravity'), tool: 'other', detail: t('Запросы идут через AGUnlocker ({p}), прокси Synapse для agy отключён', { p: env[AGU_VAR] }) });
+    }
 
     let child;
     try {
@@ -299,8 +347,17 @@ function runOnce({ id, bin, prompt, cwd, access, sessionId, ultra, model, effort
       }
       const err = state.stderr.trim();
       const notInstalled = (IS_WIN && (code === 9009 || /is not recognized|не является внутренней/i.test(err))) || code === 127;
-      const text = (state.finalResult || state.text).trim();
+      let text = (state.finalResult || state.text).trim();
       const limited = /usage limit|rate limit|limit reached|quota|5-hour limit|too many requests/i.test(err + ' ' + (state.isError ? text : ''));
+      // Google не пускает из региона — объясняем, что делать, вместо голого «400» (только если запуск не удался)
+      const failed = state.isError || (code !== 0 && !state.turnDone);
+      if (id === 'antigravity' && failed && /location is not supported|not supported in your (country|region)|ineligible/i.test(err + ' ' + (state.isError ? text : ''))) {
+        state.isError = true;
+        state.finalResult = env[AGU_VAR]
+          ? t('Antigravity: Google ответил «регион не поддерживается», хотя обход AGUnlocker найден ({p}). Откройте AGUnlocker и проверьте, что сервис запущен и agy пропатчен (после обновления agy патч нужно применить снова).', { p: env[AGU_VAR] })
+          : t('Antigravity: Google не пускает из вашего региона (ошибка 400). Установите обход AGUnlocker (github.com/confeden/Antigravity) или выберите в «Настройки → Сеть» прокси с выходом за рубежом.');
+      }
+      text = (state.finalResult || state.text).trim();
       const aborted = signal?.aborted;
       const ok = !aborted && !state.netKilled && !state.isError && !!text && (code === 0 || !!state.turnDone);
       resolve({

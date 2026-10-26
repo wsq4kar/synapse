@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1
+
+- **Antigravity bypass (AGUnlocker) works in Synapse.** The patched `agy` takes its route from `AG_LS_PROXY`, but Synapse also handed it its own `HTTPS_PROXY`, so requests went around the bypass and Google answered 400 «User location is not supported». Now, when AGUnlocker is installed, `agy` gets only `AG_LS_PROXY` (read from the Windows user environment, so it works even if Synapse was started before the bypass), and the task shows a «Antigravity bypass» step. Other agents keep the Synapse proxy.
+- A clear message instead of a bare 400 when Google blocks the region for Antigravity.
+
 ## 0.4.0
 
 - **Antigravity CLI** instead of Gemini CLI: Google's new agent (`agy`) with streaming steps, reasoning, subagents, token usage and session resume. It reports its own model list, and the Arena skips models it doesn't have. Old settings move over automatically.

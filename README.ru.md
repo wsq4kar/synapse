@@ -62,6 +62,8 @@
 | Antigravity CLI | `irm https://antigravity.google/cli/install.ps1 \| iex` (PowerShell) | запустите `agy` один раз |
 | OpenCode | `npm i -g opencode-ai` | `opencode auth login` (бесплатные модели работают без входа) |
 
+Если Antigravity недоступен в вашем регионе, обход [AGUnlocker](https://github.com/confeden/Antigravity) работает с Synapse без настройки: когда он установлен, `agy` идёт через него, а не через прокси Synapse.
+
 Горячие клавиши: `Ctrl+2` открывает сессию кода, `Ctrl+U` включает Ultra, `Ctrl+E` меняет уровень усилия, `Ctrl+J` открывает рабочее место, `Ctrl+,` открывает настройки.
 
 ## Сборка из исходников

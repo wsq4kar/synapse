@@ -111,6 +111,8 @@ Light and dark themes, five font styles, text size, accent colors, conversation 
 
 Synapse finds them in the usual places. If one isn't found, point to the file or folder in **Settings → Agents**.
 
+If Antigravity is blocked in your region, [AGUnlocker](https://github.com/confeden/Antigravity) works with Synapse out of the box: when it is installed, `agy` is routed through it instead of the Synapse proxy.
+
 You don't have to type model names: Synapse reads them from [`src/main/models.json`](src/main/models.json) and pulls a fresh copy of that file from GitHub. Antigravity also reports its own models (`agy models`).
 
 ## Privacy and security

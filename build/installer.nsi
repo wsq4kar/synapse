@@ -4,7 +4,7 @@ SetCompressor /SOLID lzma
 SetCompressorDictSize 64
 RequestExecutionLevel user
 !define APPNAME "Synapse"
-!define VERSION "0.4.0"
+!define VERSION "0.4.1"
 !define EXE "Synapse.exe"
 !define UNKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Synapse"
 

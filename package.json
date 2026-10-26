@@ -1,7 +1,7 @@
 {
   "name": "synapse-agent",
   "productName": "Synapse",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Synapse — a new gen of vibecode. Desktop AI router for Claude Code, Codex, Antigravity CLI, OpenCode, Gemini API and OpenRouter.",
   "keywords": [
     "ai",

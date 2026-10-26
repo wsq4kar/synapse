@@ -90,7 +90,13 @@ const EN = {
   'Нет доступного провайдера для этой модели': 'No provider is available for this model', 'Ошибка OpenRouter': 'OpenRouter error',
   'OpenRouter недоступен': 'OpenRouter is unavailable',
   'Новая сессия': 'New session', 'Прошлую сессию продолжить не удалось — начинаю заново с кратким контекстом': 'Could not resume the previous session — starting over with a short context',
-  'Antigravity: {s}': 'Antigravity: {s}', 'решил маршрутизатор': 'decided by the router',
+  'Antigravity: {s}': 'Antigravity: {s}',
+  'Обход Antigravity': 'Antigravity bypass',
+  'Запросы идут через AGUnlocker ({p}), прокси Synapse для agy отключён': 'Requests go through AGUnlocker ({p}); the Synapse proxy is off for agy',
+  'Antigravity: Google ответил «регион не поддерживается», хотя обход AGUnlocker найден ({p}). Откройте AGUnlocker и проверьте, что сервис запущен и agy пропатчен (после обновления agy патч нужно применить снова).':
+    'Antigravity: Google said “location is not supported” although AGUnlocker was found ({p}). Open AGUnlocker and check that its service is running and agy is patched (after an agy update the patch has to be applied again).',
+  'Antigravity: Google не пускает из вашего региона (ошибка 400). Установите обход AGUnlocker (github.com/confeden/Antigravity) или выберите в «Настройки → Сеть» прокси с выходом за рубежом.':
+    'Antigravity: Google blocks your region (error 400). Install AGUnlocker (github.com/confeden/Antigravity) or pick a proxy with a foreign exit in Settings → Network.', 'решил маршрутизатор': 'decided by the router',
 };
 
 function t(s, vars) {
