@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Installer: waits until Synapse has fully closed (up to 15 s) before copying files, instead of failing with «cannot open file for writing» when updating over a running app.
+
 ## 0.4.1
 
 - **Antigravity bypass (AGUnlocker) works in Synapse.** The patched `agy` takes its route from `AG_LS_PROXY`, but Synapse also handed it its own `HTTPS_PROXY`, so requests went around the bypass and Google answered 400 «User location is not supported». Now, when AGUnlocker is installed, `agy` gets only `AG_LS_PROXY` (read from the Windows user environment, so it works even if Synapse was started before the bypass), and the task shows a «Antigravity bypass» step. Other agents keep the Synapse proxy.

@@ -46,6 +46,33 @@ LangString UninstName ${LANG_ENGLISH} "Uninstall Synapse"
 LangString AppLang ${LANG_RUSSIAN} "ru"
 LangString AppLang ${LANG_ENGLISH} "en"
 
+; Закрыть Synapse и дождаться, пока Windows отпустит exe: процессы Electron завершаются
+; не мгновенно, и без ожидания копирование падает с «Невозможно открыть файл для записи».
+!macro CLOSE_APP UN
+Function ${UN}CloseApp
+  nsExec::Exec 'taskkill /IM "${EXE}" /F /T'
+  Pop $0
+  StrCpy $R1 0
+  IfFileExists "$INSTDIR\${EXE}" check done
+  check:
+    ClearErrors
+    FileOpen $R0 "$INSTDIR\${EXE}" a
+    IfErrors busy
+    FileClose $R0
+    Goto done
+  busy:
+    IntOp $R1 $R1 + 1
+    IntCmp $R1 30 done
+    Sleep 500
+    nsExec::Exec 'taskkill /IM "${EXE}" /F /T'
+    Pop $0
+    Goto check
+  done:
+FunctionEnd
+!macroend
+!insertmacro CLOSE_APP ""
+!insertmacro CLOSE_APP "un."
+
 Function .onInit
   !insertmacro MUI_LANGDLL_DISPLAY
 FunctionEnd
@@ -54,7 +81,7 @@ Function un.onInit
 FunctionEnd
 
 Section "Synapse" SecMain
-  nsExec::Exec 'taskkill /IM "${EXE}" /F'
+  Call CloseApp
   SetOutPath "$INSTDIR"
   File /r "..\dist\win-unpacked\*.*"
   ; язык интерфейса по выбору в установщике (настройка в приложении важнее)
@@ -76,7 +103,7 @@ Section "Synapse" SecMain
 SectionEnd
 
 Section "Uninstall"
-  nsExec::Exec 'taskkill /IM "${EXE}" /F'
+  Call un.CloseApp
   Delete "$DESKTOP\Synapse.lnk"
   RMDir /r "$SMPROGRAMS\Synapse"
   RMDir /r "$INSTDIR"
