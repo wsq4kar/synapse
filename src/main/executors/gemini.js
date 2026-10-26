@@ -5,6 +5,7 @@ const path = require('path');
 
 const tunnel = require('../tunnel');
 const netproxy = require('../netproxy');
+const { trimHistory } = require('../tokens');
 // Запросы идут через отдельную сессию Chromium: системный прокси (VPN) или SSH-туннель до вашего сервера
 async function http(url, init) {
   try {
@@ -72,13 +73,11 @@ async function toError(res) {
   return new GeminiError(`${hints[res.status] || t('Ошибка Gemini')}: ${msg}`, res.status, res.status === 401 || res.status === 403 ? 'no_key' : null);
 }
 
-// История чата → contents для Gemini
+// История чата → contents для Gemini (с бюджетом: старые сообщения короче, длинный код свёрнут)
 function toContents(history, userText, images = []) {
   const contents = [];
-  for (const m of history.slice(-24)) {
-    const text = (m.text || '').trim();
-    if (!text) continue;
-    contents.push({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: text.slice(0, 12000) }] });
+  for (const m of trimHistory(history)) {
+    contents.push({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.text }] });
   }
   const parts = images.map(img => ({ inlineData: { mimeType: img.mime, data: img.data } }));
   parts.push({ text: userText });
@@ -128,8 +127,8 @@ async function chatStream({ key, model, history, text, images, signal, onDelta, 
         const parts = j.candidates?.[0]?.content?.parts || [];
         const th = parts.filter(p => p.thought).map(p => p.text || '').join('');
         if (th) onThought?.(th);
-        const t = parts.filter(p => !p.thought).map(p => p.text || '').join('');
-        if (t) { full += t; onDelta(t); }
+        const txt = parts.filter(p => !p.thought).map(p => p.text || '').join('');
+        if (txt) { full += txt; onDelta(txt); }
         if (j.usageMetadata) usage = j.usageMetadata;
         const block = j.promptFeedback?.blockReason;
         if (block) throw new GeminiError(t('Запрос заблокирован фильтром: {b}', { b: block }));
@@ -139,14 +138,26 @@ async function chatStream({ key, model, history, text, images, signal, onDelta, 
   return { text: full, usage };
 }
 
-// Классификация для роутера: вернёт chat|code|image|video
+// Классификация для роутера: вернёт chat|code|image|video.
+// Для выбора маршрута хватает начала запроса и одного слова в ответе — рассуждения выключаем.
 async function classify({ key, model, text, prompt, context, signal }) {
   const url = `${BASE}/models/${checkModel(model)}:generateContent`;
-  const res = await call(key, url, {
+  const body = {
     systemInstruction: { parts: [{ text: prompt }] },
-    contents: [{ role: 'user', parts: [{ text: `Контекст: ${JSON.stringify(context)}\nЗапрос: ${text.slice(0, 2000)}` }] }],
-    generationConfig: { responseMimeType: 'application/json', temperature: 0 },
-  }, signal);
+    contents: [{ role: 'user', parts: [{ text: `Контекст: ${JSON.stringify(context)}\nЗапрос: ${text.slice(0, 600)}` }] }],
+    generationConfig: {
+      responseMimeType: 'application/json', temperature: 0, maxOutputTokens: 200,
+      responseSchema: { type: 'OBJECT', properties: { route: { type: 'STRING', enum: ['chat', 'code', 'image', 'video'] } }, required: ['route'] },
+    },
+  };
+  const thinking = /gemini-2\.5/.test(model) ? { thinkingBudget: 0 } : /gemini-[3-9]/.test(model) ? { thinkingLevel: 'minimal' } : null;
+  let res;
+  try {
+    res = await call(key, url, thinking ? { ...body, generationConfig: { ...body.generationConfig, thinkingConfig: thinking } } : body, signal);
+  } catch (e) {
+    if (!thinking || e.status !== 400) throw e;
+    res = await call(key, url, body, signal); // модель не умеет выключать рассуждения
+  }
   const j = await res.json();
   const raw = j.candidates?.[0]?.content?.parts?.[0]?.text || '';
   const r = JSON.parse(raw).route;
@@ -233,8 +244,8 @@ async function listModels(key) {
 
 function sleep(ms, signal) {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => { clearTimeout(t); reject(new GeminiError(t('Остановлено'), 0, 'aborted')); }, { once: true });
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new GeminiError(t('Остановлено'), 0, 'aborted')); }, { once: true });
   });
 }
 

@@ -1,0 +1,47 @@
+{
+  "$comment": "Список моделей Synapse. Приложение читает его само — пользователю ничего вводить не нужно. Чтобы обновить модели у всех, поменяйте этот файл в репозитории и увеличьте version: приложение подтянет его с GitHub. Свой список можно положить в папку данных приложения (data/models.json) — он дополнит этот.",
+  "version": "2026-10-25",
+  "agents": {
+    "claude": ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5", "claude-sonnet-5"],
+    "codex": ["gpt-6.1-sol", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],
+    "antigravity": ["gemini-4-argon", "gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low", "gemini-3.1-pro-high", "gemini-3.1-pro-low"],
+    "opencode": ["opencode/deepseek-v4.1-flash-free", "opencode/glm-5.3-flash-free", "opencode/big-pickle", "openrouter/anthropic/claude-sonnet-5.5", "openrouter/moonshotai/kimi-k3.1-pro", "openrouter/deepseek/deepseek-v4.1-flash"]
+  },
+  "openrouter": {
+    "chat": "google/gemini-3.8-flash",
+    "chatUltra": "anthropic/claude-opus-5.5",
+    "router": "google/gemini-3.5-flash-lite",
+    "image": "google/gemini-nano-banana-2.1",
+    "list": [
+      "anthropic/claude-sonnet-5.5",
+      "anthropic/claude-opus-5.5",
+      "anthropic/claude-haiku-5.5",
+      "openai/gpt-6.1-sol",
+      "openai/gpt-6-luna",
+      "google/gemini-4-argon",
+      "google/gemini-3.8-flash",
+      "x-ai/grok-4.7",
+      "moonshotai/kimi-k3.1-pro",
+      "deepseek/deepseek-v4.1-flash",
+      "z-ai/glm-5.3-flashx",
+      "qwen/qwen3.8-max-prime",
+      "openrouter/auto"
+    ]
+  },
+  "arena": [
+    { "model": "claude-opus-5-5", "agent": "claude", "tier": "big" },
+    { "model": "claude-fable-5-1", "agent": "claude", "tier": "big" },
+    { "model": "gpt-6-astra", "agent": "codex", "tier": "big" },
+    { "model": "gemini-4-argon", "agent": "antigravity", "tier": "big" },
+    { "model": "gpt-6.1-sol", "agent": "codex", "tier": "big" },
+    { "model": "gemini-3.1-pro-high", "agent": "antigravity", "tier": "big" },
+    { "model": "claude-opus-5", "agent": "claude", "tier": "big" },
+    { "model": "gpt-5.5", "agent": "codex", "tier": "big" },
+    { "model": "claude-haiku-5-5", "agent": "claude", "tier": "small" },
+    { "model": "claude-sonnet-5-5", "agent": "claude", "tier": "small" },
+    { "model": "gpt-5.6-luna", "agent": "codex", "tier": "small" },
+    { "model": "gpt-5.6-sol", "agent": "codex", "tier": "small" },
+    { "model": "gemini-3.8-flash-medium", "agent": "antigravity", "tier": "small" },
+    { "model": "opencode/deepseek-v4.1-flash-free", "agent": "opencode", "tier": "small" }
+  ]
+}

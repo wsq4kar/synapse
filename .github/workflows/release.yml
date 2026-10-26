@@ -1,10 +1,16 @@
 name: Release
 
 # Сборка установщика Windows. По тегу vX.Y.Z — публикуется релиз с установщиком.
+# Ручной запуск (workflow_dispatch) с полем «tag» тоже публикует релиз: тег создаётся на выбранном коммите.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Тег релиза, например v0.4.0 (пусто — только собрать установщик)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -12,6 +18,8 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name || '') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -26,8 +34,23 @@ jobs:
       - name: Check
         run: node scripts/check.js
 
-      - name: Build installer
-        run: npx electron-builder --win nsis --x64 --publish never -c.win.signAndEditExecutable=true
+      # Приложение собирает electron-builder (папка dist/win-unpacked), а установщик — свой скрипт
+      # build/installer.nsi: выбор языка, без прав администратора. Так же собираются релизы локально.
+      - name: Build app
+        shell: bash
+        run: npx electron-builder --win dir --x64 --publish never
+
+      - name: Exe icon and version
+        shell: bash
+        run: node build/set-exe-icon.mjs dist/win-unpacked/Synapse.exe build/icon.ico "$(node -p "require('./package.json').version")"
+
+      - name: Build installer (NSIS)
+        shell: pwsh
+        run: |
+          $nsis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (-not (Test-Path $nsis)) { choco install nsis -y --no-progress | Out-Null }
+          & $nsis /V2 /INPUTCHARSET UTF8 build\installer.nsi
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -35,9 +58,25 @@ jobs:
           path: dist/Synapse-Setup-*.exe
           if-no-files-found: error
 
+      # Описание релиза — раздел этой версии из CHANGELOG.md
+      - name: Release notes
+        if: env.RELEASE_TAG != ''
+        shell: bash
+        run: |
+          node -e "
+            const v = process.env.RELEASE_TAG.replace(/^v/, '');
+            const md = require('fs').readFileSync('CHANGELOG.md', 'utf8');
+            const m = md.split(/^## /m).find(s => s.startsWith(v + '\n') || s.startsWith(v + '\r'));
+            require('fs').writeFileSync('notes.md', m ? m.slice(m.indexOf('\n') + 1).trim() + '\n' : '');
+          "
+
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Synapse ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          body_path: notes.md
           files: dist/Synapse-Setup-*.exe
           generate_release_notes: true

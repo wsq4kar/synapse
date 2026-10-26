@@ -25,8 +25,8 @@ One desktop app. Every AI you already pay for. Describe the task, and Synapse de
 
 You have a Claude subscription, a ChatGPT subscription and a Gemini key. Each one comes with its own app, its own limits and its own tabs. Synapse puts all of them behind **one input box**:
 
-- **Code and files** go to a real coding agent running on your machine: **Claude Code**, **Codex**, **Gemini CLI** or **OpenCode**. It runs under your own login, so it uses your subscriptions and costs nothing extra.
-- **Chat, images and video** go to the **Gemini API**: Gemini for chat, Nano Banana for images, Veo for video.
+- **Code and files** go to a real coding agent running on your machine: **Claude Code**, **Codex**, **Antigravity CLI** or **OpenCode**. It runs under your own login, so it uses your subscriptions and costs nothing extra.
+- **Chat, images and video** go to the **Gemini API** (Gemini, Nano Banana, Veo) or to **OpenRouter** — hundreds of models with one key.
 - If one agent hits its limit or fails, the task **falls through to the next one** automatically.
 
 Everything stays local. Your chats, settings and keys stay on your computer, and there is no Synapse server.
@@ -41,7 +41,7 @@ Everything stays local. Your chats, settings and keys stay on your computer, and
 Synapse reads the task and picks the executor. Coding goes to an agent, a question goes to chat, "draw" goes to images, "animate" goes to video. You can also pick the agent and the exact model by hand.
 
 ### Four coding agents
-**Claude Code**, **Codex**, **Gemini CLI** and **OpenCode**, each with its real models (Opus, Sonnet, GPT-5.x, Gemini, DeepSeek, GLM and more), a fallback order you set yourself, and session resume.
+**Claude Code**, **Codex**, **Antigravity CLI** and **OpenCode**, each with its real models (Opus, Sonnet, GPT-5.x, Gemini, DeepSeek, GLM and more), a fallback order you set yourself, and session resume.
 
 ### Arena
 Turn on **Arena** in the Code tab and the large models work as a team. A small model writes the brief, then Opus, GPT-6 and Gemini plan, debate (up to 3 rounds, or until they agree), each build their own variant in a separate copy of your folder, and vote anonymously for the best one. The winner fixes what the others found, and you apply the result with one button.
@@ -96,7 +96,7 @@ Light and dark themes, five font styles, text size, accent colors, conversation 
 
 | Step | Where | What |
 |---|---|---|
-| 1 | **Settings → Gemini API** | Paste a key from [Google AI Studio](https://aistudio.google.com/apikey). Models are picked automatically. |
+| 1 | **Settings → API keys** | Paste a key from [Google AI Studio](https://aistudio.google.com/apikey) and/or [OpenRouter](https://openrouter.ai/keys). Models are picked automatically. |
 | 2 | **Settings → Agents** | Install at least one CLI agent (see below), sign in, then press **Check again**. |
 | 3 | Main screen | Type a task. Use `Ctrl+2` for a code session in a folder, `Ctrl+U` for Ultra and `Ctrl+E` for effort. |
 
@@ -106,10 +106,14 @@ Light and dark themes, five font styles, text size, accent colors, conversation 
 |---|---|---|---|
 | **Claude Code** | `npm i -g @anthropic-ai/claude-code` | `claude auth login` | Claude Pro / Max subscription |
 | **Codex** | `npm i -g @openai/codex` | `codex login` | ChatGPT Plus / Pro subscription |
-| **Gemini CLI** | `npm i -g @google/gemini-cli` | first run | Google account |
+| **Antigravity CLI** | `irm https://antigravity.google/cli/install.ps1 \| iex` (PowerShell) | run `agy` once | Google account (Gemini, Claude and GPT-OSS models) |
 | **OpenCode** | `npm i -g opencode-ai` | `opencode auth login` (optional) | Any provider, including **free** OpenCode Zen models |
 
 Synapse finds them in the usual places. If one isn't found, point to the file or folder in **Settings → Agents**.
+
+If Antigravity is blocked in your region, [AGUnlocker](https://github.com/confeden/Antigravity) works with Synapse out of the box: when it is installed, `agy` is routed through it instead of the Synapse proxy.
+
+You don't have to type model names: Synapse reads them from [`src/main/models.json`](src/main/models.json) and pulls a fresh copy of that file from GitHub. Antigravity also reports its own models (`agy models`).
 
 ## Privacy and security
 
@@ -139,8 +143,12 @@ src/
   main/                 Electron main process
     main.js             window, IPC, task runner, routing to executors
     router.js           heuristic + Gemini classification of tasks
-    executors/cli.js    Claude Code / Codex / Gemini CLI / OpenCode runners and stream parsers
+    executors/cli.js    Claude Code / Codex / Antigravity CLI / OpenCode runners and stream parsers
     executors/gemini.js Gemini API: chat (streaming, thoughts), images, video
+    executors/openrouter.js OpenRouter: chat, routing, images, model list
+    models.json         model lists for agents, OpenRouter and the Arena
+    catalog.js          reads models.json and updates it from GitHub
+    tokens.js           history budgets that save tokens
     netproxy.js         system / HTTP proxy / SSH network modes
     tunnel.js           SSH SOCKS tunnel
     firewall.js         Windows Firewall rules for strict mode

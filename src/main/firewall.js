@@ -38,7 +38,6 @@ function findFile(dir, name, depth = 6) {
 function targets(agents) {
   const list = [{ id: 'synapse', label: 'Synapse', exe: process.execPath, ok: true }];
   for (const a of agents || []) {
-    if (a.id === 'gemini-cli') { list.push({ id: a.id, label: a.label, ok: false, why: t('работает через node.exe — отдельно не заблокировать, но получает прокси') }); continue; }
     const p = a.path || a.bin;
     if (!a.installed || !p) { list.push({ id: a.id, label: a.label, ok: false, why: t('не установлен') }); continue; }
     if (/\.exe$/i.test(p) && fs.existsSync(p)) { list.push({ id: a.id, label: a.label, exe: p, ok: true }); continue; }

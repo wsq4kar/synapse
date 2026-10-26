@@ -62,7 +62,7 @@ async function route({ text, mode, hasFolder, hasImages, lastRoute, askModel }) 
   if (askModel) {
     try {
       const r = await askModel(text, { hasFolder, lastRoute });
-      if (r) return { route: r, reason: t('решил Gemini') };
+      if (r) return { route: r, reason: t('решил маршрутизатор') };
     } catch { /* без сети или без ключа — идём дальше */ }
   }
 
