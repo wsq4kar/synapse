@@ -96,12 +96,15 @@ function thinkingFor(model, effort) {
   return null;
 }
 
-async function chatStream({ key, model, history, text, images, signal, onDelta, onThought, effort, memory }) {
+async function chatStream({ key, model, history, text, images, signal, onDelta, onThought, effort, memory, search }) {
   const url = `${BASE}/models/${checkModel(model)}:streamGenerateContent?alt=sse`;
   const body = {
-    systemInstruction: { parts: [{ text: SYSTEM + (memory ? `\n\nО пользователе (его собственные заметки, учитывай в ответах):\n${memory}` : '') }] },
+    systemInstruction: { parts: [{ text: SYSTEM + (memory ? `\n\nО пользователе (его собственные заметки, учитывай в ответах):\n${memory}` : '') + (search ? '\n\nРежим «Исследование»: найди актуальную информацию через поиск Google, сравни источники и опирайся на них.' : '') }] },
     contents: toContents(history, text, images),
+    // «Исследование»: поиск Google внутри модели; источники приходят в groundingMetadata
+    ...(search ? { tools: [{ google_search: {} }] } : {}),
   };
+  const sources = new Map();
   // includeThoughts — модель присылает краткий пересказ своих рассуждений
   const thinking = /gemini-(2\.5|[3-9])/.test(model) && !/image|tts|live/.test(model) ? { ...(thinkingFor(model, effort) || {}), includeThoughts: true } : thinkingFor(model, effort);
   let res;
@@ -130,10 +133,15 @@ async function chatStream({ key, model, history, text, images, signal, onDelta, 
         const txt = parts.filter(p => !p.thought).map(p => p.text || '').join('');
         if (txt) { full += txt; onDelta(txt); }
         if (j.usageMetadata) usage = j.usageMetadata;
+        for (const c of j.candidates?.[0]?.groundingMetadata?.groundingChunks || []) if (c.web?.uri) sources.set(c.web.uri, c.web.title || c.web.uri);
         const block = j.promptFeedback?.blockReason;
         if (block) throw new GeminiError(t('Запрос заблокирован фильтром: {b}', { b: block }));
       } catch (e) { if (e instanceof GeminiError) throw e; }
     }
+  }
+  if (sources.size) {
+    const tail = `\n\n**${t('Источники')}**\n${[...sources].slice(0, 12).map(([u, ti]) => `- [${ti.replace(/[\[\]]/g, '')}](${u})`).join('\n')}`;
+    full += tail; onDelta(tail);
   }
   return { text: full, usage };
 }

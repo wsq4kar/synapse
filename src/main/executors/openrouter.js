@@ -80,7 +80,9 @@ function toMessages(model, history, userText, images, memory) {
     msgs.push({ role: m.role === 'user' ? 'user' : 'assistant', content: mark && last ? cached(m.text) : m.text });
   });
   const content = images.length
-    ? [...images.map(img => ({ type: 'image_url', image_url: { url: `data:${img.mime};base64,${img.data}` } })), { type: 'text', text: userText }]
+    ? [...images.map(img => img.mime === 'application/pdf'
+      ? { type: 'file', file: { filename: img.name || 'file.pdf', file_data: `data:application/pdf;base64,${img.data}` } }
+      : { type: 'image_url', image_url: { url: `data:${img.mime};base64,${img.data}` } }), { type: 'text', text: userText }]
     : userText;
   msgs.push({ role: 'user', content });
   return msgs;
@@ -92,9 +94,10 @@ function reasoningFor(effort) {
   return effort && map[effort] ? { effort: map[effort] } : {};
 }
 
-async function chatStream({ key, model, history, text, images = [], signal, onDelta, onThought, effort, memory }) {
+async function chatStream({ key, model, history, text, images = [], signal, onDelta, onThought, effort, memory, search }) {
   const res = await call(key, '/chat/completions', {
-    model: checkModel(model),
+    // «Исследование»: суффикс :online включает веб-поиск OpenRouter, ссылки приходят в ответе
+    model: checkModel(search && !/:online$/.test(model) ? `${model.replace(/:[\w-]+$/, '')}:online` : model),
     messages: toMessages(model, history, text, images, memory),
     stream: true,
     reasoning: reasoningFor(effort),

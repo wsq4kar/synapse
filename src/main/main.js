@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, protocol, net, Menu, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, protocol, net, Menu, screen, desktopCapturer } = require('electron');
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
@@ -333,6 +333,21 @@ ipcMain.handle('usage:read', () => store.readUsage());
 ipcMain.handle('stats:get', () => store.usageStats());
 // «Что нового»: CHANGELOG.md из папки приложения
 ipcMain.handle('changelog:get', () => { try { return fs.readFileSync(path.join(__dirname, '../../CHANGELOG.md'), 'utf8'); } catch { return ''; } });
+// Скриншот экрана для меню «+»: окно Synapse прячется на время снимка
+ipcMain.handle('screen:capture', async () => {
+  const d = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const wasVisible = win && win.isVisible() && !win.isMinimized();
+  if (wasVisible) { win.hide(); await new Promise(r => setTimeout(r, 350)); }
+  try {
+    const size = { width: Math.round(d.size.width * d.scaleFactor), height: Math.round(d.size.height * d.scaleFactor) };
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: size });
+    const src = sources.find(s => String(s.display_id) === String(d.id)) || sources[0];
+    if (!src || src.thumbnail.isEmpty()) return null;
+    return { mime: 'image/png', data: src.thumbnail.toPNG().toString('base64') };
+  } finally {
+    if (wasVisible) { win.show(); win.focus(); }
+  }
+});
 ipcMain.handle('task:cancel', (_e, taskId) => { tasks.get(taskId)?.abort(); return true; });
 ipcMain.handle('task:run', (_e, input) => {
   const taskId = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -348,11 +363,35 @@ ipcMain.handle('task:run', (_e, input) => {
 });
 
 // ---------------- выполнение задачи ----------------
+// Прикреплённые файлы (не картинки): текст — прямо в запрос чата, PDF — моделям, которые его читают,
+// агентам — сохраняем в папку проекта и даём пути (агент сам прочитает, лишние токены не тратятся)
+const TEXT_EXT = /\.(txt|md|markdown|js|mjs|cjs|ts|tsx|jsx|py|lua|luau|json|jsonc|css|scss|html?|xml|svg|ya?ml|toml|ini|cfg|conf|env|csv|tsv|sql|sh|bat|cmd|ps1|c|cc|cpp|h|hpp|cs|java|kt|go|rs|rb|php|swift|dart|vue|svelte|log|gitignore|dockerfile)$/i;
+function prepareFiles(list) {
+  const out = { inline: '', docs: [], save: [] };
+  let budget = 120000;
+  for (const f of (Array.isArray(list) ? list : []).slice(0, 10)) {
+    if (!f || typeof f.data !== 'string' || !f.name) continue;
+    const name = path.basename(String(f.name)).replace(/[<>:"|?*\x00-\x1f]/g, '_').slice(0, 120) || 'file';
+    const buf = Buffer.from(f.data, 'base64');
+    if (buf.length > 20 * 1024 * 1024) continue;
+    out.save.push({ name, buf });
+    const isText = buf.length <= 400000 && !buf.includes(0) && (/^text\/|json|xml|javascript|yaml|toml|csv|sql/.test(f.mime || '') || TEXT_EXT.test(name));
+    if (isText && buf.length <= budget) { budget -= buf.length; out.inline += `\n\n${t('Файл')} ${name}:\n\`\`\`\n${buf.toString('utf8')}\n\`\`\``; }
+    else if (f.mime === 'application/pdf') out.docs.push({ mime: 'application/pdf', data: f.data, name });
+    else out.inline += `\n\n${t('Приложен файл {n} ({k} КБ) — его содержимое в чат не передаётся.', { n: name, k: Math.ceil(buf.length / 1024) })}`;
+  }
+  return out;
+}
+
 async function runTask(taskId, input, signal) {
   const settings = store.getSettings();
   const key = store.getGeminiKey();
   const images = (input.images || []).filter(i => i && /^image\//.test(i.mime) && typeof i.data === 'string');
   const text = String(input.text || '').trim();
+  input.prep = prepareFiles(input.files);
+  // для чата: текст файлов в запросе, PDF — рядом с картинками
+  const chatText = text + input.prep.inline;
+  const chatImages = images.concat(input.prep.docs);
   const started = Date.now();
 
   send(taskId, { kind: 'status', status: 'routing' });
@@ -383,7 +422,7 @@ async function runTask(taskId, input, signal) {
     // Чат через OpenRouter: выбрана его модель или нет ключа Gemini
     const orPicked = /^or:/.test(input.chatModel || '') ? input.chatModel.slice(3) : null;
     if (decided.route === 'chat' && orKey && (orPicked || !key)) {
-      return await runOpenRouterChat(taskId, input, settings, orKey, orPicked, text, images, signal, log);
+      return await runOpenRouterChat(taskId, input, settings, orKey, orPicked, text, images, signal, log, chatText, chatImages);
     }
     // Без ключей разговор ведёт Claude Code / Codex — подписки хватает
     if (decided.route === 'chat' && !key) {
@@ -398,7 +437,7 @@ async function runTask(taskId, input, signal) {
       let r;
       try {
         const go = (mdl) => gemini.chatStream({
-          key, model: mdl, history: input.history || [], text, images, signal, memory: memoryText(settings),
+          key, model: mdl, history: input.history || [], text: chatText, images: chatImages, signal, memory: memoryText(settings), search: !!input.research,
           effort: cli.effortOf(input.effort || settings.effort, input.ultra),
           onDelta: (d) => send(taskId, { kind: 'delta', text: d }),
           onThought: (d) => { thoughts += d; send(taskId, { kind: 'thinking', text: thoughts }); },
@@ -470,7 +509,7 @@ function orSettings(settings) {
     router: ok(own.router) ? own.router : def.router, image: ok(own.image) ? own.image : def.image,
   };
 }
-async function runOpenRouterChat(taskId, input, settings, orKey, picked, text, images, signal, log) {
+async function runOpenRouterChat(taskId, input, settings, orKey, picked, text, images, signal, log, chatText = text, chatImages = images) {
   const cfg = orSettings(settings);
   const model = picked && openrouter.MODEL_RE.test(picked) ? picked : (input.ultra ? cfg.chatUltra : cfg.chat);
   send(taskId, { kind: 'executor', executor: 'openrouter', label: `OpenRouter · ${model}` });
@@ -478,7 +517,7 @@ async function runOpenRouterChat(taskId, input, settings, orKey, picked, text, i
   let r;
   try {
     r = await openrouter.chatStream({
-      key: orKey, model, history: input.history || [], text, images, signal, memory: memoryText(settings),
+      key: orKey, model, history: input.history || [], text: chatText, images: chatImages, signal, memory: memoryText(settings), search: !!input.research,
       effort: cli.effortOf(input.effort || settings.effort, input.ultra),
       onDelta: (d) => send(taskId, { kind: 'delta', text: d }),
       onThought: (d) => { thoughts += d; send(taskId, { kind: 'thinking', text: thoughts }); },
@@ -694,6 +733,19 @@ async function runCode(taskId, input, settings, text, images, signal, log) {
     });
     attachNote = `\n\n${t('Приложенные изображения:')}\n${saved.map(s => `- ${s}`).join('\n')}`;
   }
+  if (input.prep?.save.length) {
+    const dir = path.join(cwd, '.synapse', 'attachments');
+    fs.mkdirSync(dir, { recursive: true });
+    const saved = input.prep.save.map(({ name, buf }) => {
+      const f = path.join(dir, `${Date.now()}-${name}`);
+      fs.writeFileSync(f, buf);
+      return f;
+    });
+    attachNote += `\n\n${t('Приложенные файлы:')}\n${saved.map(s => `- ${s}`).join('\n')}`;
+  }
+  // режимы из меню «+»
+  if (input.research) attachNote += `\n\n${t('Режим «Исследование»: сначала найди актуальную информацию в интернете (веб-поиск), сверь несколько источников и в конце дай список источников со ссылками.')}`;
+  if (input.plan) attachNote += `\n\n${t('Режим плана: ничего не меняй и не запускай команды, которые меняют файлы. Изучи проект и составь подробный план: что и в каких файлах сделать, в каком порядке, какие риски. В конце спроси, начинать ли.')}`;
 
   // Сеть для агентов: в строгом режиме без прокси задача не запускается вовсе
   const extraEnv = { ...(await netproxy.agentEnv() || {}) };
@@ -713,7 +765,7 @@ async function runCode(taskId, input, settings, text, images, signal, log) {
     const mem = memoryText(settings);
     const env = settings.claudeEnv || {};
     const go = (sessionId) => cli.run({
-      id, bin: cli.binFor(id, settings.cliPaths), cwd, access: settings.agentAccess,
+      id, bin: cli.binFor(id, settings.cliPaths), cwd, access: input.plan ? 'read' : settings.agentAccess,
       // Claude получает «Обо мне» системным промптом, остальные агенты — в начале новой сессии
       prompt: (id !== 'claude' && mem && !sessionId ? `${t('Контекст о пользователе (из Synapse):')}\n${mem}\n\n---\n\n` : '')
         + (sessionId ? '' : historyContext(input.history)) + text + attachNote,

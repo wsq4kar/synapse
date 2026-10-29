@@ -1206,3 +1206,43 @@ details[open] > :not(summary) { animation: arIn .35s var(--spring) both; }
 .ext-err { display: flex; align-items: center; gap: 8px; }
 .ext-err .ic { width: 15px; height: 15px; flex: none; }
 .ext-err span { flex: 1; }
+
+/* ================= 0.5: меню «+», вложения-файлы, режимы ================= */
+.menu-item .mi-sub { margin-left: auto; display: inline-flex; color: var(--muted); transition: transform .3s var(--spring); }
+.menu-item .mi-sub .ic { width: 14px; height: 14px; }
+.menu-item.has-sub .mi-hint + .mi-sub { margin-left: 4px; }
+.menu-item.sub-open { background: var(--hover); }
+.menu-item.sub-open .mi-sub { transform: translateX(2px); color: var(--text); }
+.menu-item .mi-kbd { margin-left: auto; padding-left: 14px; font: 500 11px var(--font); color: var(--muted); background: none; border: 0; }
+.menu-item .switch.sm { width: 28px; height: 17px; margin-left: 10px; }
+.menu-item .switch.sm::after { width: 11px; height: 11px; }
+.menu-item .switch.sm.on::after { transform: translateX(11px); }
+.menu-item .mi-hint + .switch.sm { margin-left: 10px; }
+.menu-item:not(:has(.mi-hint)) .switch.sm, .menu-item:not(:has(.mi-hint)) .mi-kbd { margin-left: auto; }
+.menu-item .prov-ic { width: 15px; height: 15px; }
+.popover.open .menu-item { animation: miIn .32s var(--spring) both; animation-delay: calc(var(--i, 0) * 14ms); }
+@keyframes miIn { from { opacity: 0; transform: translateY(3px); } }
+.sub-pop { min-width: 250px; max-width: 360px; }
+.sub-pop .menu-item .mi-text { max-width: 170px; }
+.sub-loading { display: flex; align-items: center; gap: 8px; padding: 9px 10px; }
+
+.att.file { width: auto; max-width: 230px; display: flex; align-items: center; gap: 9px; padding: 0 30px 0 8px; background: var(--raised); }
+.att-ext { flex: none; display: grid; place-items: center; min-width: 36px; height: 36px; padding: 0 4px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); font: 700 10px var(--font-round); letter-spacing: .02em; }
+.att-meta { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.att-meta b { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-meta small { font-size: 11px; color: var(--muted); }
+.att.file button { top: 50%; right: 7px; transform: translateY(-50%); background: var(--hover); color: var(--text-2); opacity: 1; }
+.user-files { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; margin-bottom: 6px; }
+.uf { display: flex; align-items: center; gap: 8px; max-width: 240px; padding: 6px 12px 6px 6px; border-radius: 12px; border: 1px solid var(--line); background: var(--raised); }
+
+.composer-flags { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 4px 0; }
+.attachments:not(:empty) + .composer-flags { padding-top: 8px; }
+.composer-flags:not(.hidden) + .composer-row { margin-top: 6px; }
+.cflag { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 4px 0 10px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); font-size: 12.5px; font-weight: 600; animation: pop .45s var(--spring-bouncy) both; animation-delay: calc(var(--i, 0) * 40ms); }
+.cflag .ic { width: 14px; height: 14px; }
+.cflag button { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; color: inherit; opacity: .7; transition: opacity .15s, background .15s, transform .3s var(--spring); }
+.cflag button:hover { opacity: 1; background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.cflag button:active { transform: scale(.88); }
+.cflag button .ic { width: 12px; height: 12px; stroke-width: 2.6; }
+@media (prefers-reduced-motion: reduce) { .popover.open .menu-item, .cflag { animation: none; } }
+.rm .popover.open .menu-item, .rm .cflag { animation: none; }

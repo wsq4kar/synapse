@@ -96,7 +96,8 @@ function buildCommand(id, { access, sessionId, lastMessageFile, ultra, model, ef
       const args = ['-p', '--output-format', 'stream-json', '--verbose',
         // текст по кусочкам + краткий пересказ рассуждений модели
         '--include-partial-messages', '--thinking-display', 'summarized',
-        '--permission-mode', access === 'full' ? 'bypassPermissions' : 'acceptEdits'];
+        // read — «Режим плана»: в -p без разрешений правки и команды отклоняются, чтение работает
+        '--permission-mode', access === 'full' ? 'bypassPermissions' : access === 'read' ? 'default' : 'acceptEdits'];
       if (sessionId && /^[\w-]+$/.test(sessionId)) args.push('--resume', sessionId);
       if (m) args.push('--model', m);
       if (ef) args.push('--effort', ef);
@@ -123,7 +124,7 @@ function buildCommand(id, { access, sessionId, lastMessageFile, ultra, model, ef
       // Так не нужно передавать длинный текст в командной строке (cmd.exe ломает кавычки и переносы).
       const args = ['--input-format', 'stream-json', '--output-format', 'stream-json'];
       if (access === 'full') args.push('--dangerously-skip-permissions');
-      else args.push('--mode', 'accept-edits');
+      else args.push('--mode', access === 'read' ? 'plan' : 'accept-edits');
       if (sessionId && SESSION_RE.test(sessionId)) args.push('--conversation', sessionId);
       if (m) args.push('--model', m);
       if (ef && AGY_EFFORT[ef]) args.push('--effort', AGY_EFFORT[ef]);
@@ -134,6 +135,7 @@ function buildCommand(id, { access, sessionId, lastMessageFile, ultra, model, ef
       // задача приходит через stdin; --format json — поток событий; --thinking — рассуждения
       const args = ['run', '--format', 'json', '--thinking'];
       if (access === 'full') args.push('--auto');
+      if (access === 'read') args.push('--agent', 'plan'); // встроенный агент OpenCode, который не меняет файлы
       if (sessionId && /^[\w-]+$/.test(sessionId)) args.push('--session', sessionId);
       if (m) args.push('--model', m);
       if (ef && OPENCODE_VARIANT[ef]) args.push('--variant', OPENCODE_VARIANT[ef]);
@@ -280,7 +282,7 @@ function runOnce({ id, bin, prompt, cwd, access, sessionId, ultra, model, effort
     fs.mkdirSync(cwd, { recursive: true });
     const lastMessageFile = path.join(os.tmpdir(), `synapse-codex-${Date.now()}.txt`);
     const built = buildCommand(id, { access, sessionId, lastMessageFile, ultra, model, effort, memoryFile, allowTools });
-    const VALUE_FLAGS = new Set(['--sandbox', '-s', '--model', '-m', '--config', '-c', '--effort', '--permission-mode', '--approval-mode', '--ask-for-approval', '-a', '--append-system-prompt-file', '--allowedTools', '--thinking-display', '--variant', '--session', '--format', '--mode', '--conversation']);
+    const VALUE_FLAGS = new Set(['--sandbox', '-s', '--model', '-m', '--config', '-c', '--effort', '--permission-mode', '--approval-mode', '--ask-for-approval', '-a', '--append-system-prompt-file', '--allowedTools', '--thinking-display', '--variant', '--session', '--format', '--agent', '--mode', '--mode', '--conversation']);
     const args = [];
     for (let i = 0; i < built.args.length; i++) {
       const a = built.args[i];

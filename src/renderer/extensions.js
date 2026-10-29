@@ -558,5 +558,10 @@
   }
   function focusEnd(sel) { const i = root?.querySelector(sel); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }
 
-  window.Extensions = { init(helpers) { H = helpers; }, render, reset() { S.mcp = S.plugins = S.skills = null; } };
+  // Открыть страницу сразу на нужной вкладке (из меню «+»); newSkill — сразу форма нового скилла
+  function preset(tab, { newSkill } = {}) {
+    S.tab = tab; S.form = null; S.sure = null;
+    S.edit = newSkill ? { name: '', description: '', body: '', roots: ['claude', 'agents'] } : null;
+  }
+  window.Extensions = { init(helpers) { H = helpers; }, render, preset, reset() { S.mcp = S.plugins = S.skills = null; } };
 })();

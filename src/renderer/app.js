@@ -93,6 +93,7 @@ const state = {
   hist: [], hpos: -1,
   tab: 'chat', mode: 'auto',
   attachments: [],
+  flags: { research: false, plan: false }, // режимы из меню «+»
   tasks: new Map(),   // taskId -> { chatId, msgId, started }
   queue: new Map(),   // chatId -> [{ id, text, mode, images, ultra }]
   search: '',
@@ -389,8 +390,11 @@ function renderMessage(m, last) {
     if (m.mode && m.mode !== 'auto' && m.mode !== 'code') meta.push(`${icon(MODES[m.mode].icon)}${MODES[m.mode].label}`);
     if (m.ultra) meta.push(`<span class="uw">Ultra</span>`);
     if (m.arena) meta.push(`<span class="aw">${icon('swords')}${t('Арена')}</span>`);
+    if (m.research) meta.push(`${icon('globe')}${t('Исследование')}`);
+    if (m.plan) meta.push(`${icon('clipboard')}${t('Режим плана')}`);
     el.innerHTML = `
       ${m.images?.length ? `<div class="user-imgs">${m.images.filter(Boolean).map(src => `<img src="${src}" alt="">`).join('')}</div>` : ''}
+      ${m.files?.length ? `<div class="user-files">${m.files.map(f => `<span class="uf"><span class="att-ext">${esc(fileExt(f.name))}</span><span class="att-meta"><b>${esc(f.name)}</b><small>${fmtSize(f.size || 0)}</small></span></span>`).join('')}</div>` : ''}
       <div class="bubble">${highlightUltra(m.text, false)}</div>
       ${meta.length ? `<div class="user-meta">${meta.join(' · ')}</div>` : ''}`;
   } else fillAssistant(el, m);
@@ -1062,7 +1066,11 @@ function submit({ now = false } = {}) {
   if (!text && !state.attachments.length) return;
   const chat = currentChat();
   if (!chat) return;
-  const item = { id: uid(), text, mode: chat.kind === 'code' ? 'code' : state.mode, images: state.attachments, ultra: !!state.settings.ultra || hasUltraWord(text), arena: chat.kind === 'code' && arenaOn() };
+  const code = chat.kind === 'code';
+  const item = { id: uid(), text, mode: code ? 'code' : state.mode,
+    images: state.attachments.filter(a => a.kind !== 'file'), files: state.attachments.filter(a => a.kind === 'file'),
+    ultra: !!state.settings.ultra || hasUltraWord(text), arena: code && arenaOn(),
+    research: !!state.flags.research, plan: code && !!state.flags.plan };
   input.value = ''; state.attachments = []; renderAttachments(); syncInput();
   bump();
   if (isRunning(chat.id)) {
@@ -1081,7 +1089,8 @@ async function run(chat, item, { retry = false } = {}) {
   const prevAssistant = [...chat.messages].reverse().find(m => m.role === 'assistant' && m.route);
   const history = chat.messages.filter(m => m.text).map(m => ({ role: m.role, text: m.text }));
   if (retry && history.at(-1)?.role === 'user') history.pop();
-  const userMsg = { id: uid(), role: 'user', text: item.text, mode: item.mode, ultra: item.ultra, arena: !!item.arena, images: item.images.map(a => a.thumb), at: Date.now() };
+  const userMsg = { id: uid(), role: 'user', text: item.text, mode: item.mode, ultra: item.ultra, arena: !!item.arena, research: !!item.research, plan: !!item.plan,
+    images: item.images.map(a => a.thumb), files: (item.files || []).map(f => ({ name: f.name, size: f.size })), at: Date.now() };
   const aMsg = { id: uid(), role: 'assistant', status: 'running', text: '', steps: [], fallbacks: [], files: [], ultra: item.ultra, at: Date.now() };
   if (!retry) chat.messages.push(userMsg);
   chat.messages.push(aMsg);
@@ -1092,9 +1101,11 @@ async function run(chat, item, { retry = false } = {}) {
   pets.react('start');
   try {
     const taskId = await api.task.run({
-      chatId: chat.id, text: item.text || t('Опиши изображение'), mode: item.mode, ultra: item.ultra, effort: state.settings.effort, team: chat.kind === 'code' && !!state.settings.team, arena: !!item.arena,
+      chatId: chat.id, text: item.text || (item.images.length ? t('Опиши изображение') : t('Посмотри приложенные файлы')), mode: item.mode, ultra: item.ultra, effort: state.settings.effort, team: chat.kind === 'code' && !!state.settings.team, arena: !!item.arena,
       executor: chat.executor || null, agentModel: chat.agentModel || null, chatModel: chat.chatModel || null,
       images: item.images.map(a => ({ mime: a.mime, data: a.data })),
+      files: (item.files || []).map(f => ({ name: f.name, mime: f.mime, data: f.data })),
+      research: !!item.research, plan: !!item.plan,
       cwd: chat.cwd, history, sessions: chatSessions(chat), lastRoute: prevAssistant?.route || null,
     });
     state.tasks.set(taskId, { chatId: chat.id, msgId: aMsg.id, started: Date.now() });
@@ -1281,6 +1292,7 @@ function updateSendBtn() {
 }
 
 function renderMeta() {
+  renderFlags();
   const chat = currentChat();
   if (!chat || !state.settings) return;
   const code = chat.kind === 'code';
@@ -1407,13 +1419,27 @@ function sparks(x, y) {
 /* вложения */
 async function addFiles(files) {
   for (const f of files) {
-    if (!f.type.startsWith('image/')) { toast(`${f.name}${t(': можно прикреплять только изображения')}`, true); continue; }
     if (f.size > 20 * 1024 * 1024) { toast(`${f.name}${t(': больше 20 МБ')}`, true); continue; }
-    if (state.attachments.length >= 6) { toast(t('Не больше 6 изображений'), true); break; }
+    if (state.attachments.length >= 10) { toast(t('Не больше 10 вложений'), true); break; }
     const dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
-    state.attachments.push({ name: f.name, mime: f.type, data: dataUrl.split(',')[1], thumb: await thumb(dataUrl) });
+    const data = dataUrl.split(',')[1] || '';
+    const image = /^image\/(png|jpe?g|gif|webp|bmp)$/.test(f.type);
+    state.attachments.push(image
+      ? { kind: 'image', name: f.name, mime: f.type, data, thumb: await thumb(dataUrl) }
+      : { kind: 'file', name: f.name, mime: f.type || 'application/octet-stream', data, size: f.size });
   }
   renderAttachments(); updateSendBtn();
+}
+const fileExt = (n) => (String(n).match(/\.([\w]{1,5})$/)?.[1] || 'file').toUpperCase();
+const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} ${t('МБ')}` : `${Math.max(1, Math.round(b / 1024))} ${t('КБ')}`);
+async function takeScreenshot() {
+  try {
+    const shot = await api.captureScreen();
+    if (!shot) return toast(t('Не удалось сделать снимок экрана'), true);
+    const dataUrl = `data:image/png;base64,${shot.data}`;
+    state.attachments.push({ kind: 'image', name: t('Снимок экрана') + '.png', mime: 'image/png', data: shot.data, thumb: await thumb(dataUrl) });
+    renderAttachments(); updateSendBtn(); $('#input').focus();
+  } catch (e) { toast(cleanErr(e), true); }
 }
 function thumb(dataUrl) {
   return new Promise((resolve) => {
@@ -1430,20 +1456,28 @@ function thumb(dataUrl) {
   });
 }
 function renderAttachments() {
-  $('#attachments').innerHTML = state.attachments.map((a, i) => `<div class="att"><img src="${a.thumb}" alt=""><button data-rm-att="${i}" title="${t('Убрать')}">${icon('x')}</button></div>`).join('');
+  $('#attachments').innerHTML = state.attachments.map((a, i) => a.kind === 'file'
+    ? `<div class="att file" style="--i:${i}" title="${esc(a.name)}"><span class="att-ext">${esc(fileExt(a.name))}</span><span class="att-meta"><b>${esc(a.name)}</b><small>${fmtSize(a.size)}</small></span><button data-rm-att="${i}" title="${t('Убрать')}">${icon('x')}</button></div>`
+    : `<div class="att" style="--i:${i}"><img src="${a.thumb}" alt=""><button data-rm-att="${i}" title="${t('Убрать')}">${icon('x')}</button></div>`).join('');
 }
 
 /* ================= Меню ================= */
 let popClose = null;
+function menuItemsHtml(items) {
+  let n = 0;
+  return items.map((it, idx) => {
+    if (it === '-') return '<div class="menu-sep"></div>';
+    if (it.label && !it.act && !it.sub) return `<div class="menu-label">${esc(it.label)}</div>`;
+    const tail = it.sub ? `<span class="mi-sub">${icon('chevronRight')}</span>`
+      : it.toggle !== undefined ? `<span class="switch sm ${it.toggle ? 'on' : ''}"></span>`
+      : it.check !== false ? `<span class="mi-check">${icon('check')}</span>` : '';
+    return `<button class="menu-item ${it.sel ? 'sel' : ''} ${it.danger ? 'danger' : ''} ${it.sub ? 'has-sub' : ''}" data-i="${idx}" ${it.disabled ? 'disabled' : ''} style="--i:${n++}">
+      ${it.iconHtml || (it.icon ? icon(it.icon) : '')}<span class="mi-text">${esc(it.text)}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : ''}${it.kbd ? `<kbd class="mi-kbd">${esc(it.kbd)}</kbd>` : ''}${tail}</button>`;
+  }).join('');
+}
 function menu(anchor, items, { align = 'left', onClose } = {}) {
   const el = $('#menu');
-  let n = 0;
-  el.innerHTML = items.map((it, idx) => {
-    if (it === '-') return '<div class="menu-sep"></div>';
-    if (it.label && !it.act) return `<div class="menu-label">${esc(it.label)}</div>`;
-    return `<button class="menu-item ${it.sel ? 'sel' : ''} ${it.danger ? 'danger' : ''}" data-i="${idx}" ${it.disabled ? 'disabled' : ''} style="--i:${n++}">
-      ${it.iconHtml || (it.icon ? icon(it.icon) : '')}<span class="mi-text">${esc(it.text)}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : ''}${it.check !== false ? `<span class="mi-check">${icon('check')}</span>` : ''}</button>`;
-  }).join('');
+  el.innerHTML = menuItemsHtml(items);
   closePopovers();
   el.classList.add('open');
   const r = anchor.getBoundingClientRect();
@@ -1455,26 +1489,169 @@ function menu(anchor, items, { align = 'left', onClose } = {}) {
   Object.assign(el.style, { top: top + 'px', left: left + 'px' });
   el.style.setProperty('--origin', `${origin} ${align}`);
   popClose = onClose || null;
+  let subFor = -1, subTimer = 0;
+  // Подменю: открывается при наведении (с небольшой задержкой) или по нажатию
+  const openSub = async (b) => {
+    const idx = Number(b.dataset.i);
+    if (subFor === idx) return;
+    subFor = idx;
+    el.querySelectorAll('.has-sub').forEach(x => x.classList.toggle('sub-open', x === b));
+    const sp = $('#submenu');
+    sp.innerHTML = `<div class="menu-label sub-loading"><span class="ext-spin"></span>${t('Загрузка…')}</div>`;
+    placeSub(sp, b);
+    let list;
+    try { list = await items[idx].sub(); } catch (e) { list = [{ label: cleanErr(e) }]; }
+    if (subFor !== idx || !el.classList.contains('open')) return;
+    if (!list?.length) list = [{ label: t('Пусто') }];
+    sp.innerHTML = menuItemsHtml(list);
+    placeSub(sp, b);
+    sp.onclick = (e) => {
+      const x = e.target.closest('[data-i]');
+      if (!x || x.disabled) return;
+      const it = list[Number(x.dataset.i)];
+      if (it.keep) { it.act?.(e, x); return; }
+      closePopovers();
+      it.act?.(e);
+    };
+  };
+  const closeSub = () => { subFor = -1; $('#submenu').classList.remove('open'); el.querySelectorAll('.sub-open').forEach(x => x.classList.remove('sub-open')); };
+  el.onmouseover = (e) => {
+    const b = e.target.closest('[data-i]');
+    clearTimeout(subTimer);
+    if (!b) return;
+    if (b.classList.contains('has-sub')) subTimer = setTimeout(() => openSub(b), 90);
+    else if (subFor >= 0) subTimer = setTimeout(closeSub, 220);
+  };
   el.onclick = (e) => {
     const b = e.target.closest('[data-i]');
     if (!b || b.disabled) return;
     const it = items[Number(b.dataset.i)];
+    if (it.sub) { clearTimeout(subTimer); return openSub(b); }
+    if (it.keep) { it.act?.(e, b); return; }
     closePopovers();
     it.act?.(e);
   };
 }
+function placeSub(sp, b) {
+  sp.classList.add('open');
+  const r = b.getBoundingClientRect();
+  const w = sp.offsetWidth, h = sp.offsetHeight;
+  let left = r.right + 6, origin = 'left';
+  if (left + w > innerWidth - 8) { left = r.left - w - 6; origin = 'right'; }
+  const top = Math.max(8, Math.min(r.top - 5, innerHeight - h - 8));
+  Object.assign(sp.style, { top: top + 'px', left: Math.max(8, left) + 'px' });
+  sp.style.setProperty('--origin', `top ${origin}`);
+}
 function closePopovers() {
   $('#menu').classList.remove('open');
+  $('#submenu')?.classList.remove('open');
   $('#ctxPop')?.classList.remove('open');
   if (popClose) { const f = popClose; popClose = null; f(); }
 }
 
+// Режимы из меню «+»: остаются включёнными, пока их не выключить
+const FLAGS = {
+  research: { icon: 'globe', get label() { return t('Исследование'); }, get hint() { return t('поиск в интернете с источниками'); } },
+  plan: { icon: 'clipboard', get label() { return t('Режим плана'); }, get hint() { return t('только читает и составляет план'); }, code: true },
+};
+function setFlag(k, on) {
+  state.flags[k] = on;
+  renderFlags();
+}
+function renderFlags() {
+  const chat = currentChat();
+  const code = chat?.kind === 'code';
+  const on = Object.entries(FLAGS).filter(([k, f]) => state.flags[k] && (!f.code || code));
+  const box = $('#composerFlags');
+  box.innerHTML = on.map(([k, f], i) => `<span class="cflag" style="--i:${i}">${icon(f.icon)}<span>${esc(f.label)}</span><button data-flag-off="${k}" title="${t('Выключить')}">${icon('x')}</button></span>`).join('');
+  box.classList.toggle('hidden', !on.length);
+}
+async function skillsSub() {
+  const chat = currentChat();
+  const r = await api.ext.skills({ cwd: chat?.cwd || null });
+  const seen = new Set();
+  const list = (r.skills || []).filter(sk => !seen.has(sk.name) && seen.add(sk.name)).slice(0, 14).map(sk => ({
+    icon: 'book', text: sk.name, hint: sk.description || '', check: false,
+    act: () => insertText(t('Используй скилл «{n}». ', { n: sk.name })),
+  }));
+  return [
+    ...(list.length ? [{ label: t('Применить к задаче') }, ...list, '-'] : []),
+    { icon: 'plus', text: t('Создать скилл…'), check: false, act: () => { Extensions.preset('skills', { newSkill: true }); go({ type: 'extensions' }); } },
+    { icon: 'puzzle', text: t('Все скиллы'), check: false, act: () => { Extensions.preset('skills'); go({ type: 'extensions' }); } },
+  ];
+}
+async function connectorsSub() {
+  const r = await api.ext.mcpList();
+  const rows = (r.list || []).filter(x => !x.parked).slice(0, 14);
+  const items = rows.map(row => {
+    const agents = Object.keys(row.agents);
+    const on = agents.some(a => row.agents[a] === true);
+    return {
+      icon: 'plug', text: row.name, hint: agents.map(a => PROVIDERS[a]?.name || a).join(', '), toggle: on, keep: true,
+      act: async (_e, b) => {
+        b.disabled = true;
+        try {
+          for (const a of agents) await api.ext.mcpToggle({ name: row.name, agent: a, on: !on, spec: row.spec });
+          b.querySelector('.switch')?.classList.toggle('on', !on);
+          toast(on ? t('«{n}» выключен', { n: row.name }) : t('«{n}» включён', { n: row.name }));
+          Extensions.reset();
+        } catch (e) { toast(cleanErr(e), true); } finally { b.disabled = false; }
+      },
+    };
+  });
+  return [
+    ...(items.length ? [{ label: t('MCP-серверы') }, ...items, '-'] : []),
+    { icon: 'plus', text: t('Подключить сервис…'), check: false, act: () => { Extensions.preset('connectors'); go({ type: 'extensions' }); } },
+    { icon: 'puzzle', text: t('Управлять коннекторами'), check: false, act: () => { Extensions.preset('mcp'); go({ type: 'extensions' }); } },
+  ];
+}
+async function pluginsSub() {
+  const r = await api.ext.plugins();
+  const c = r.claude;
+  const items = c?.ok ? (c.installed || []).slice(0, 12).map(p => ({
+    iconHtml: provIcon('claude'), text: p.id.split('@')[0], hint: p.id.split('@')[1] || '', toggle: !!p.enabled, keep: true,
+    act: async (_e, b) => {
+      b.disabled = true;
+      try {
+        await api.ext.plugin({ action: p.enabled ? 'disable' : 'enable', id: p.id });
+        p.enabled = !p.enabled;
+        b.querySelector('.switch')?.classList.toggle('on', p.enabled);
+        Extensions.reset();
+      } catch (e) { toast(cleanErr(e), true); } finally { b.disabled = false; }
+    },
+  })) : [];
+  return [
+    ...(items.length ? [{ label: 'Claude Code' }, ...items, '-'] : []),
+    { icon: 'store', text: t('Маркетплейс'), check: false, act: () => { Extensions.preset('market'); go({ type: 'extensions' }); } },
+    { icon: 'puzzle', text: t('Все плагины'), check: false, act: () => { Extensions.preset('plugins'); go({ type: 'extensions' }); } },
+  ];
+}
+function insertText(str) {
+  const el = $('#input');
+  el.value = str + el.value;
+  syncInput(); el.focus();
+  el.setSelectionRange(str.length, str.length);
+}
 function plusMenu() {
   const chat = currentChat();
+  const code = chat.kind === 'code';
+  const flagItem = (k) => ({ icon: FLAGS[k].icon, text: FLAGS[k].label, hint: FLAGS[k].hint, toggle: !!state.flags[k], keep: true,
+    act: (_e, b) => { setFlag(k, !state.flags[k]); b.querySelector('.switch')?.classList.toggle('on', state.flags[k]); } });
   menu($('#plusBtn'), [
-    { icon: 'image', text: t('Прикрепить изображение'), check: false, act: () => $('#fileInput').click() },
-    { icon: 'folder', text: chat.cwd ? t('Сменить папку…') : t('Выбрать папку…'), check: false, act: pickFolder },
+    { icon: 'paperclip', text: t('Прикрепить файлы'), kbd: 'Ctrl+O', check: false, act: () => $('#fileInput').click() },
+    { icon: 'camera', text: t('Снимок экрана'), check: false, act: takeScreenshot },
+    { icon: 'folderPlus', text: chat.cwd ? t('Сменить папку…') : t('Добавить папку…'), check: false, act: pickFolder },
     ...(chat.cwd ? [{ icon: 'x', text: t('Отвязать папку'), check: false, act: () => setCwd(null) }] : []),
+    '-',
+    { icon: 'book', text: t('Скиллы'), sub: skillsSub },
+    { icon: 'plug', text: t('Коннекторы'), sub: connectorsSub },
+    { icon: 'puzzle', text: t('Плагины'), sub: pluginsSub },
+    '-',
+    flagItem('research'),
+    ...(code ? [flagItem('plan')] : [
+      { icon: 'image', text: t('Создать изображение'), hint: 'Nano Banana', check: false, act: () => { state.mode = 'image'; renderMeta(); $('#input').focus(); } },
+      { icon: 'video', text: t('Создать видео'), hint: 'Veo', check: false, act: () => { state.mode = 'video'; renderMeta(); $('#input').focus(); } },
+    ]),
   ]);
 }
 async function envMenu() {
@@ -2496,6 +2673,7 @@ function bindUI() {
   $('#workBtn').addEventListener('click', () => Workbench.toggle());
   $('#progressClose').addEventListener('click', toggleProgress);
   $('#fileInput').addEventListener('change', (e) => { addFiles([...e.target.files]); e.target.value = ''; });
+  $('#composerFlags').addEventListener('click', (e) => { const b = e.target.closest('[data-flag-off]'); if (b) { setFlag(b.dataset.flagOff, false); $('#input').focus(); } });
   $('#attachments').addEventListener('click', (e) => { const b = e.target.closest('[data-rm-att]'); if (b) { state.attachments.splice(Number(b.dataset.rmAtt), 1); renderAttachments(); updateSendBtn(); } });
   $('#keyBanner').addEventListener('click', () => openSettings('api'));
 
@@ -2571,7 +2749,7 @@ function bindUI() {
     if (tg.closest('[data-retry]') && m && !isRunning(chat.id)) return retry(m.id);
   });
   document.addEventListener('dblclick', (e) => { const r = e.target.closest('.row-item[data-chat]'); if (r) renameChat(r.dataset.chat); });
-  document.addEventListener('mousedown', (e) => { if (!e.target.closest('#menu, #ctxPop') && !e.target.closest('.meta-btn, #plusBtn, [data-chat-more], #crumbTitle, #projMore, #ringBtn')) closePopovers(); });
+  document.addEventListener('mousedown', (e) => { if (!e.target.closest('#menu, #submenu, #ctxPop') && !e.target.closest('.meta-btn, #plusBtn, [data-chat-more], #crumbTitle, #projMore, #ringBtn')) closePopovers(); });
   window.addEventListener('resize', closePopovers);
   window.addEventListener('blur', closePopovers);
   window.addEventListener('mouseup', (e) => { if (e.button === 3) histStep(-1); if (e.button === 4) histStep(1); });
@@ -2588,6 +2766,7 @@ function bindUI() {
     if (mod && k === 'k') { e.preventDefault(); $('#searchInput').focus(); }
     if (mod && k === 'b') { e.preventDefault(); $('#collapseBtn').click(); }
     if (mod && k === 'u') { e.preventDefault(); toggleUltra(); }
+    if (mod && k === 'o' && state.view.type === 'chat') { e.preventDefault(); $('#fileInput').click(); }
     if (mod && (k === 'j' || e.code === 'Backquote') && currentChat()?.kind === 'code' && state.view.type === 'chat') { e.preventDefault(); Workbench.toggle(true); }
     if (mod && k === 'e') { e.preventDefault(); cycleEffort(); }
     if (mod && e.key === '.') { e.preventDefault(); toggleProgress(); }
