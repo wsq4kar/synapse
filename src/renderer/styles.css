@@ -1271,3 +1271,57 @@ details[open] > :not(summary) { animation: arIn .35s var(--spring) both; }
 @media (prefers-reduced-motion: reduce) { .sl-item { animation: none; } .slash-pop { transition: opacity .1s; } }
 .rm .sl-item { animation: none; }
 .pets-layer { transition: opacity .2s; } body.slash-open .pets-layer { opacity: 0; }
+
+/* ================= Команда ================= */
+:root { --team: #4263eb; --team-2: #1c9fbf; }
+.arena.team, .team-badge { --arena: var(--team); --arena-2: var(--team-2); }
+.team-btn .ic { width: 14px; height: 14px; }
+.team-btn.on { color: var(--team); background: color-mix(in srgb, var(--team) 11%, transparent); }
+.team-btn.on .ic { animation: tmBob 2.6s var(--spring) infinite; }
+@keyframes tmBob { 0%, 70%, 100% { transform: none; } 80% { transform: translateY(-2px); } 90% { transform: translateY(1px); } }
+.composer.team-on:not(.ultra) { border-color: color-mix(in srgb, var(--team) 50%, var(--line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--team) 11%, transparent), var(--shadow); transition: box-shadow .4s var(--ease-out), border-color .4s; }
+.user-meta .tw { display: inline-flex; align-items: center; gap: 4px; color: var(--team); font-weight: 600; }
+.user-meta .tw .ic { width: 12px; height: 12px; }
+.badge.team-badge { color: var(--team); }
+.tm-role { display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; color: var(--muted); padding: 1px 7px; border-radius: 99px; background: var(--hover); }
+.tm-role .ic { width: 10px; height: 10px; }
+.tm-role.lead { color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, transparent); }
+.tm-role.junior { color: var(--accent); background: var(--accent-soft); }
+.tm-count { margin-left: auto; font: 600 11px var(--font); color: var(--muted); font-variant-numeric: tabular-nums; }
+.tm-member.lead { border-color: color-mix(in srgb, var(--gold) 35%, var(--line)); }
+
+.tm-board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 10px 0 4px; }
+@container (max-width: 560px) { .tm-board { grid-template-columns: 1fr; } }
+.tm-col { min-width: 0; padding: 7px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; min-height: 64px; }
+.tm-col-h { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; font-weight: 600; color: var(--muted); padding: 1px 3px 2px; }
+.tm-col-h span { font-variant-numeric: tabular-nums; background: var(--hover); border-radius: 99px; padding: 0 7px; font-size: 11px; }
+.tm-col.run .tm-col-h { color: var(--team); }
+.tm-col.done .tm-col-h { color: var(--accent); }
+.tm-task { padding: 8px 9px; border-radius: 9px; background: var(--raised); border: 1px solid var(--line); animation: tmIn .45s var(--spring) both; animation-delay: calc(var(--i, 0) * 50ms); transition: border-color .3s, transform .3s var(--spring); }
+@keyframes tmIn { from { opacity: 0; transform: translateY(6px) scale(.97); } }
+.tm-task:hover { transform: translateY(-1px); }
+.tm-task.run { border-color: color-mix(in srgb, var(--team) 45%, var(--line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--team) 9%, transparent); }
+.tm-task.done .tm-t { color: var(--text-2); }
+.tm-task.error { border-style: dashed; opacity: .75; }
+.tm-t { font-size: 12.5px; font-weight: 600; line-height: 1.35; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tm-meta { display: flex; align-items: center; gap: 5px; margin-top: 5px; font-size: 11px; color: var(--muted); min-width: 0; }
+.tm-meta > span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tm-meta .prov-ic { width: 12px; height: 12px; flex: none; }
+.tm-files, .tm-dep { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; flex: none; }
+.tm-dep { margin-left: 4px; }
+.tm-files .ic, .tm-dep .ic { width: 11px; height: 11px; }
+.tm-act { margin-top: 4px; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+.tm-act.err-t { color: var(--danger); font-family: var(--font); }
+.tm-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 8px 0; opacity: .6; }
+.tm-badge { margin-left: 6px; font-size: 11px; padding: 0 7px; border-radius: 99px; background: var(--hover); color: var(--text-2); font-weight: 600; }
+.tm-badge.ok { background: var(--accent-soft); color: var(--accent); }
+.tm-notes { display: flex; flex-direction: column; gap: 8px; padding: 6px 2px 4px; }
+.tm-note { display: flex; gap: 8px; align-items: flex-start; animation: tmIn .4s var(--spring) both; animation-delay: calc(var(--i, 0) * 40ms); }
+.tm-note .prov-ic { width: 16px; height: 16px; margin-top: 2px; flex: none; }
+.tm-note b { font-size: 12.5px; }
+.tm-note .dim { color: var(--muted); font-size: 11.5px; }
+.tm-note .md { font-size: 12.5px; margin-top: 2px; }
+.ar-chip small { color: var(--muted); font-size: 10.5px; margin-left: 4px; }
+@media (prefers-reduced-motion: reduce) { .tm-task, .tm-note, .team-btn.on .ic { animation: none; } }
+.rm .tm-task, .rm .tm-note, .rm .team-btn.on .ic { animation: none; }
+.arena.team { container-type: inline-size; }

@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('synapse', {
     plugins: invoke('ext:plugins'), plugin: invoke('ext:plugin'), market: invoke('ext:market'), codexPlugin: invoke('ext:codexPlugin'),
   },
   arena: { roster: invoke('arena:roster'), apply: invoke('arena:apply'), files: invoke('arena:files'), open: invoke('arena:open') },
+  team: { roster: invoke('team:roster') },
   open: invoke('shell:open'),
   openUrl: invoke('shell:url'),
   reveal: invoke('shell:reveal'),

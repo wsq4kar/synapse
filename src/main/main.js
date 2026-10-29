@@ -12,6 +12,7 @@ const catalog = require('./catalog');
 const tokens = require('./tokens');
 const cli = require('./executors/cli');
 const discord = require('./discord');
+const team = require('./team');
 const ws = require('./workspace');
 const tunnel = require('./tunnel');
 const netproxy = require('./netproxy');
@@ -413,6 +414,11 @@ async function runTask(taskId, input, signal) {
     const log = (extra) => store.logUsage({ route: 'code', ms: Date.now() - started, chars: text.length, arena: true, ultra: !!input.ultra, ...extra });
     return runArena(taskId, input, settings, text, images, signal, log);
   }
+  if (input.team && input.mode === 'code') {
+    send(taskId, { kind: 'route', route: 'code', reason: t('Команда') });
+    const log = (extra) => store.logUsage({ route: 'code', ms: Date.now() - started, chars: text.length, team: true, ultra: !!input.ultra, ...extra });
+    return runTeam(taskId, input, settings, text, images, signal, log);
+  }
   // Агент выбран вручную в меню модели — задача уходит ему (кроме явных «Изображение»/«Видео»)
   const forced = input.executor && cli.LABELS[input.executor] && !['image', 'video'].includes(input.mode)
     ? { route: 'code', reason: t('выбрано вручную') } : null;
@@ -554,16 +560,12 @@ function memoryText(settings) {
   try { return fs.readFileSync(memoryPath(), 'utf8').trim().slice(0, 12000); } catch { return ''; }
 }
 // Дополнение к системному промпту Claude Code: «Обо мне» + режим «Команда»
-const TEAM_PROMPT = `Режим «Команда». Работай как ведущий разработчик с командой субагентов:
-- Если задача большая, разбей её на независимые части и поручи их субагентам (инструмент Task/Agent) — несколько сразу, параллельно. Например: разметка и стили, логика, данные, тесты, проверка результата.
-- Каждому субагенту дай короткое понятное описание (description) и полное задание с путями к файлам.
-- Сам собери результат, проверь, что части стыкуются, и кратко отчитайся.
-- Для простых вопросов и маленьких правок субагентов не запускай.`;
-function systemFileFor(mem, team) {
+// Субагенты: агент сам решает, нужны ли они (отдельной кнопки больше нет)
+const SUBAGENT_RULE = `Субагенты: если задача большая и делится на независимые части (например, интерфейс, логика, данные, тесты), а у тебя есть инструмент субагентов (Task/Agent), сам запусти несколько субагентов параллельно — каждому короткое описание и полное задание с путями к файлам; потом проверь, что части стыкуются. Для вопросов и небольших правок субагентов не запускай.`;
+function systemFileFor(mem) {
   const parts = [];
   if (mem) parts.push(`# О пользователе (его собственные заметки)\n${mem}`);
-  if (team) parts.push(TEAM_PROMPT);
-  if (!parts.length) return null;
+  parts.push(SUBAGENT_RULE);
   const f = path.join(store.dirs().root, 'run-system.md');
   fs.writeFileSync(f, parts.join('\n\n'), 'utf8');
   return f;
@@ -631,6 +633,40 @@ async function runArena(taskId, input, settings, text, images, signal, log) {
     throw e;
   }
 }
+async function runTeam(taskId, input, settings, text, images, signal, log) {
+  const agents = cliCache || (cliCache = await cli.detect(settings.cliPaths));
+  const cwd = input.cwd || path.join(settings.workspaceRoot, `chat-${String(input.chatId).slice(0, 8)}`);
+  fs.mkdirSync(cwd, { recursive: true });
+  send(taskId, { kind: 'cwd', cwd });
+  send(taskId, { kind: 'executor', executor: 'team', label: t('Команда') });
+  let note = '';
+  const saveAt = path.join(arenaRoot(), 'attachments');
+  const saved = [];
+  if (images.length || input.prep?.save.length) fs.mkdirSync(saveAt, { recursive: true });
+  images.forEach((img, i) => { const f = path.join(saveAt, `${Date.now()}-${i}.${img.mime.split('/')[1] || 'png'}`); fs.writeFileSync(f, Buffer.from(img.data, 'base64')); saved.push(f); });
+  for (const { name, buf } of input.prep?.save || []) { const f = path.join(saveAt, `${Date.now()}-${name}`); fs.writeFileSync(f, buf); saved.push(f); }
+  if (saved.length) note = `\n\n${t('Приложенные файлы:')}\n${saved.map(s => `- ${s}`).join('\n')}`;
+  const extraEnv = { ...(await netproxy.agentEnv() || {}) };
+  if (store.getOpenRouterKey()) extraEnv.OPENROUTER_API_KEY = store.getOpenRouterKey();
+  const hist = (input.history || []).filter(m => m.text).slice(-6).map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text.slice(0, 1200)}`).join('\n');
+  try {
+    const r = await team.run({
+      input, settings, agents, text: text + note, history: hist, memory: memoryText(settings),
+      cwd, root: arenaRoot(), extraEnv, signal,
+      emit: (ev) => { if (ev.type === 'init') discord.taskUpdate(taskId, { members: ev.members.length }); send(taskId, ev); },
+    });
+    log({ executor: 'team', ok: true, model: r.lead?.model, usage: r.usage });
+    return send(taskId, { kind: 'done', text: r.text, executor: 'team', cwd, usage: { ...r.usage, model: t('Команда') } });
+  } catch (e) {
+    log({ executor: 'team', ok: false, error: String(e.message).slice(0, 200) });
+    throw e;
+  }
+}
+ipcMain.handle('team:roster', async () => {
+  const settings = store.getSettings();
+  const agents = cliCache || (cliCache = await cli.detect(settings.cliPaths));
+  return { ...team.roster(settings, agents), models: catalog.get().arena, agents: agents.map(a => ({ id: a.id, label: a.label, installed: a.installed })) };
+});
 ipcMain.handle('arena:roster', async () => {
   const settings = store.getSettings();
   const agents = cliCache || (cliCache = await cli.detect(settings.cliPaths));
@@ -779,9 +815,9 @@ async function runCode(taskId, input, settings, text, images, signal, log) {
     const go = (sessionId) => cli.run({
       id, bin: cli.binFor(id, settings.cliPaths), cwd, access: input.plan ? 'read' : settings.agentAccess,
       // Claude получает «Обо мне» системным промптом, остальные агенты — в начале новой сессии
-      prompt: (id !== 'claude' && mem && !sessionId ? `${t('Контекст о пользователе (из Synapse):')}\n${mem}\n\n---\n\n` : '')
+      prompt: (id !== 'claude' && !sessionId ? `${mem ? `${t('Контекст о пользователе (из Synapse):')}\n${mem}\n\n` : ''}${SUBAGENT_RULE}\n\n---\n\n` : '')
         + (sessionId ? '' : historyContext(input.history)) + text + attachNote,
-      memoryFile: id === 'claude' ? systemFileFor(mem, !!input.team) : null,
+      memoryFile: id === 'claude' ? systemFileFor(mem) : null,
       allowTools: settings.allowConnectors !== false ? ['Skill', ...(env.mcpPrefixes || [])] : [],
       sessionId, ultra: !!input.ultra, effort: input.effort || settings.effort, model: id === input.executor ? input.agentModel : null,
       extraEnv, signal, onEvent: (ev) => {

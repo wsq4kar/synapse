@@ -534,7 +534,7 @@ const PARSERS = {
           if (done && item.text) { state.text += (state.text ? '\n\n' : '') + item.text; emit({ kind: 'text', text: state.text }); }
           break;
         case 'command_execution':
-          emit({ kind: 'step', id: item.id, status, title: t('Команда'), tool: 'run', detail: String(item.command || '').slice(0, 160) });
+          emit({ kind: 'step', id: item.id, status, title: t('Терминал'), tool: 'run', detail: String(item.command || '').slice(0, 160) });
           break;
         case 'file_change': {
           const ch = item.changes || [];
@@ -580,7 +580,7 @@ const PARSERS = {
     } else if (j.msg) {
       const m = j.msg;
       if (m.type === 'agent_message' && m.message) { state.text += (state.text ? '\n\n' : '') + m.message; emit({ kind: 'text', text: state.text }); }
-      if (m.type === 'exec_command_begin') emit({ kind: 'step', id: m.call_id, status: 'run', title: t('Команда'), tool: 'run', detail: [].concat(m.command || []).join(' ').slice(0, 160) });
+      if (m.type === 'exec_command_begin') emit({ kind: 'step', id: m.call_id, status: 'run', title: t('Терминал'), tool: 'run', detail: [].concat(m.command || []).join(' ').slice(0, 160) });
       if (m.type === 'exec_command_end') emit({ kind: 'step', id: m.call_id, status: m.exit_code ? 'error' : 'done' });
       if (m.type === 'error') { state.isError = true; state.finalResult = m.message; }
       if (m.type === 'token_count') {

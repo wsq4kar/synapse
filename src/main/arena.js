@@ -427,7 +427,7 @@ async function run(opts) {
 
 // ---------- применение итога ----------
 function readMeta(root, runId) {
-  if (!/^a[a-z0-9]+$/.test(runId || '')) throw new Error('bad run id');
+  if (!/^[at][a-z0-9]+$/.test(runId || '')) throw new Error('bad run id');
   return JSON.parse(fs.readFileSync(path.join(root, runId, 'meta.json'), 'utf8'));
 }
 /** Перенести вариант в папку пользователя. Без force — сначала проверка, не менялись ли файлы с начала Арены. */
@@ -470,9 +470,10 @@ function variantDir(root, runId, pid) {
 // храним последние N прогонов
 function cleanup(root, keep) {
   try {
-    const dirs = fs.readdirSync(root).filter(d => /^a[a-z0-9]+$/.test(d)).sort();
+    const dirs = fs.readdirSync(root).filter(d => /^[at][a-z0-9]+$/.test(d)).sort((a, b) => a.slice(1).localeCompare(b.slice(1)));
     for (const d of dirs.slice(0, Math.max(0, dirs.length - keep))) fs.rmSync(path.join(root, d), { recursive: true, force: true });
   } catch { /* папки ещё нет */ }
 }
 
-module.exports = { run, roster, apply, variantFiles, variantDir, unified, lastJson, changes, snapshot };
+module.exports = { run, roster, apply, variantFiles, variantDir, unified, lastJson, changes, snapshot,
+  copyTree, fileDiff, cleanup, candidatesFor, addUsage, stripJson, clip, MODEL_MISSING, BIG_AGENTS };

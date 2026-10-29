@@ -141,7 +141,7 @@
       ${http ? `<div class="field"><label>URL</label><input class="input mono" data-f="url" value="${esc(f.url || '')}" placeholder="https://example.com/mcp" spellcheck="false"></div>
         <div class="field"><label>${t('Заголовки')}</label><textarea class="input mono" rows="2" data-f="headers" placeholder="Authorization: Bearer …" spellcheck="false">${esc(f.headers || '')}</textarea>
           <div class="hint">${t('Если сервер входит через OAuth, заголовки не нужны: после добавления нажмите «Войти».')}</div></div>`
-      : `<div class="field"><label>${t('Команда')}</label><input class="input mono" data-f="cmd" value="${esc(f.cmd || '')}" placeholder="npx -y @modelcontextprotocol/server-filesystem C:\\Projects" spellcheck="false"></div>
+      : `<div class="field"><label>${t('Команда запуска')}</label><input class="input mono" data-f="cmd" value="${esc(f.cmd || '')}" placeholder="npx -y @modelcontextprotocol/server-filesystem C:\\Projects" spellcheck="false"></div>
         <div class="field"><label>${t('Переменные окружения')}</label><textarea class="input mono" rows="2" data-f="env" placeholder="API_KEY=…" spellcheck="false">${esc(f.env || '')}</textarea></div>`}
       <div class="field"><label>${t('Для каких агентов')}</label>${agentChecks('agents', f.agents || installed())}</div>
       ${S.tests.__form ? `<div class="er-test ${S.tests.__form.ok ? 'ok' : 'bad'}">${icon(S.tests.__form.ok ? 'check' : 'alert')}<span>${esc(S.tests.__form.ok ? S.tests.__form.note : S.tests.__form.error)}</span></div>` : ''}

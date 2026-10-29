@@ -419,6 +419,7 @@ function renderMessage(m, last) {
     if (m.mode && m.mode !== 'auto' && m.mode !== 'code') meta.push(`${icon(MODES[m.mode].icon)}${MODES[m.mode].label}`);
     if (m.ultra) meta.push(`<span class="uw">Ultra</span>`);
     if (m.arena) meta.push(`<span class="aw">${icon('swords')}${t('Арена')}</span>`);
+    if (m.team) meta.push(`<span class="tw">${icon('users')}${t('Команда')}</span>`);
     if (m.research) meta.push(`${icon('globe')}${t('Исследование')}`);
     if (m.plan) meta.push(`${icon('clipboard')}${t('Режим плана')}`);
     el.innerHTML = `
@@ -465,11 +466,13 @@ function fillAssistant(el, m) {
   const running = m.status === 'running';
   const parts = [];
   const badges = [];
-  if (m.route) badges.push(m.executor === 'arena' || m.arena
+  if (m.route) badges.push(m.executor === 'team' || m.team
+    ? `<span class="badge team-badge">${icon('users')}${t('Команда')}</span>`
+    : m.executor === 'arena' || m.arena
     ? `<span class="badge arena-badge">${icon('swords')}${t('Арена')}</span>`
     : `<span class="badge">${provOf(m) ? provIcon(provOf(m)) : icon(ROUTE_ICON[m.route])}${esc(m.label ? tl(m.label) : ROUTE_NAME[m.route])}</span>`);
   if (m.ultra) badges.push(`<span class="badge ultra"><span>Ultra</span></span>`);
-  if (m.reason && !(m.reason === 'выбрано вручную' && currentChat()?.kind === 'code') && !(m.reason === 'Арена' || m.reason === t('Арена'))) badges.push(`<span>${esc(t(m.reason))}</span>`);
+  if (m.reason && !(m.reason === 'выбрано вручную' && currentChat()?.kind === 'code') && !['Арена', 'Команда', t('Арена'), t('Команда')].includes(m.reason)) badges.push(`<span>${esc(t(m.reason))}</span>`);
   if (badges.length) parts.push(`<div class="route">${badges.join('')}</div>`);
 
   for (const f of m.fallbacks || []) {
@@ -478,11 +481,12 @@ function fillAssistant(el, m) {
 
   const fx = fxOf(m.id);
   if (m.arena) parts.push(arenaHtml(m, running));
+  if (m.team) parts.push(teamHtml(m, running));
   if (m.thinking || (running && m.thinkAt && !m.thinkEnd)) parts.push(thinkHtml(m, running));
   if (m.subs?.length) parts.push(subsHtml(m));
 
   const steps = m.steps || [];
-  if ((running && !m.arena) || steps.length) {
+  if ((running && !m.arena && !m.team) || steps.length) {
     const cur = [...steps].reverse().find(s => s.status === 'run');
     const head = running
       ? `<span class="dots3"><i></i><i></i><i></i></span><span class="act-text"><span class="shimmer">${esc(cur ? `${t(cur.title)} ${cur.detail || ''}` : phaseText(m))}</span></span><span class="act-time" data-since="${m.at}">${fmtSec(Math.round((Date.now() - m.at) / 1000))}</span>`
@@ -525,7 +529,7 @@ function fillAssistant(el, m) {
     </div>`);
   }
   el.innerHTML = parts.join('');
-  if (m.arena) keepDetails(el, m.id);
+  if (m.arena || m.team) keepDetails(el, m.id);
   enhanceCode(el);
   applyFx(el.querySelector('.md'), m);
   steps.forEach(s => fx.seen.add(s.id));
@@ -729,6 +733,142 @@ async function arenaAction(tg, m, chat) {
     return true;
   }
   return false;
+}
+
+/* ================= Команда ================= */
+const TEAM_STAGES = [['plan', 'План'], ['work', 'Работа'], ['integrate', 'Сборка'], ['review', 'Ревью'], ['fix', 'Исправления'], ['result', 'Итог']];
+const teamOn = () => !!state.settings.team;
+const ROLE_NAME = { lead: 'ведущий', dev: 'разработчик', junior: 'младший' };
+function teamEvent(m, ev) {
+  if (ev.type === 'init') {
+    m.team = { runId: ev.runId, stage: 'copy', review: ev.review, members: ev.members.map(x => ({ ...x, status: 'wait' })), tasks: [], notes: [], plan: '', reviewRes: null, result: null };
+    return;
+  }
+  const T = m.team;
+  if (!T) return;
+  const mem = (id) => T.members.find(x => x.id === id);
+  switch (ev.type) {
+    case 'stage': T.stage = ev.stage; break;
+    case 'member': {
+      const x = mem(ev.mid); if (!x) break;
+      if (ev.status) { x.status = ev.status; x.stage = ev.stage; if (ev.status === 'run') { x.activity = ''; x.task = ev.task || null; } }
+      if (ev.activity) x.activity = ev.activity;
+      if (ev.error) x.error = ev.error;
+      break;
+    }
+    case 'model': { const x = mem(ev.mid); if (x) x.model = ev.model; break; }
+    case 'plan': T.plan = ev.text; break;
+    case 'tasks': T.tasks = ev.tasks.map(x => ({ ...x })); break;
+    case 'task': {
+      const x = T.tasks.find(y => y.id === ev.id); if (!x) break;
+      for (const k of ['status', 'owner', 'summary', 'error', 'activity']) if (ev[k] != null) x[k] = ev[k];
+      if (ev.status === 'run') { x.at = ev.at || Date.now(); x.activity = ''; }
+      break;
+    }
+    case 'note': T.notes.push({ from: ev.from, mid: ev.mid, task: ev.task, text: ev.text }); break;
+    case 'review': T.reviewRes = { mid: ev.mid, ok: ev.ok, issues: ev.issues || [], note: ev.note || '' }; break;
+    case 'result': T.result = { files: ev.files, dir: ev.dir }; T.runId = ev.runId; break;
+  }
+}
+function teamHtml(m, running) {
+  const T = m.team;
+  const stages = TEAM_STAGES.filter(([id]) => !(id === 'review' && (!T.review || T.members.filter(x => x.role !== 'junior').length < 2)) && !(id === 'fix' && !(T.stage === 'fix' || (T.reviewRes && T.reviewRes.issues.length))));
+  const cur = stages.findIndex(s => s[0] === T.stage);
+  const steps = stages.map(([id, l], i) => {
+    const st = T.stage === 'result' && !running ? 'done' : i < cur ? 'done' : i === cur ? 'cur' : '';
+    return `<span class="ar-st ${st}">${st === 'done' ? icon('check') : ''}${esc(t(l))}</span>`;
+  }).join('<i class="ar-sep"></i>');
+  const mem = (id) => T.members.find(x => x.id === id);
+  const memName = (x) => (x ? arenaName(x) : '');
+  const cards = T.members.map((x, i) => {
+    const st = x.status === 'run' ? 'run' : x.status === 'error' ? 'error' : x.status === 'idle' ? 'done' : 'wait';
+    const task = x.task && T.tasks.find(y => y.id === x.task);
+    const what = x.status === 'run'
+      ? `<span class="shimmer">${esc(task ? task.title : t(TEAM_STAGES.find(s => s[0] === x.stage)?.[1] || ''))}</span>${x.activity ? ` · ${esc(t(x.activity.split(' ')[0]))} ${esc(x.activity.split(' ').slice(1).join(' '))}` : ''}`
+      : x.status === 'error' ? esc(x.error || t('ошибка')) : x.status === 'idle' ? t('свободен') : t('ждёт');
+    const done = T.tasks.filter(y => y.owner === x.id && y.status === 'done').length, all = T.tasks.filter(y => y.owner === x.id).length;
+    return `<div class="ar-card tm-member ${st} ${x.role}" style="--i:${i}">
+      <div class="ar-top">${provIcon(x.agent)}<b title="${esc(x.model || '')}">${esc(memName(x))}</b><span class="tm-role ${x.role}">${x.role === 'lead' ? icon('crown') : ''}${t(ROLE_NAME[x.role] || '')}</span>
+        ${all ? `<span class="tm-count">${done}/${all}</span>` : ''}</div>
+      <div class="ar-what ${st}">${what}</div></div>`;
+  }).join('');
+  const col = (key, title, list) => `<div class="tm-col ${key}"><div class="tm-col-h">${title}<span>${list.length}</span></div>
+    ${list.map((x, i) => { const o = mem(x.owner); return `<div class="tm-task ${x.status}" style="--i:${i}" title="${esc(x.title)}">
+      <div class="tm-t">${esc(x.title)}</div>
+      <div class="tm-meta">${o ? provIcon(o.agent) : ''}<span>${esc(memName(o))}</span>${x.files?.length ? `<span class="tm-files" title="${esc(x.files.join('\n'))}">${icon('file')}${x.files.length}</span>` : ''}${x.after?.length && x.status === 'wait' ? `<span class="tm-dep" title="${t('Ждёт')}: ${esc(x.after.join(', '))}">${icon('clock')}</span>` : ''}</div>
+      ${x.status === 'run' && x.activity ? `<div class="tm-act shimmer">${esc(x.activity)}</div>` : ''}
+      ${x.status === 'error' ? `<div class="tm-act err-t">${esc(x.error || t('ошибка'))}</div>` : ''}
+    </div>`; }).join('') || `<div class="tm-empty">—</div>`}</div>`;
+  const parts = [];
+  parts.push(`<div class="ar-head">${icon('users')}<b>${t('Команда')}</b><span class="dim">${T.members.length} ${plural(T.members.length, [t('участник'), t('участника'), t('участников')])}${T.tasks.length ? ` · ${T.tasks.length} ${plural(T.tasks.length, [t('задача'), t('задачи'), t('задач')])}` : ''}</span>
+    ${running ? `<span class="act-time" data-since="${m.at}">${fmtSec(Math.round((Date.now() - m.at) / 1000))}</span>` : ''}</div>`);
+  parts.push(`<div class="ar-steps">${steps}</div>`);
+  parts.push(`<div class="ar-grid">${cards}</div>`);
+  if (T.tasks.length) {
+    parts.push(`<div class="tm-board">${col('wait', t('В очереди'), T.tasks.filter(x => x.status === 'wait'))}${col('run', t('В работе'), T.tasks.filter(x => x.status === 'run'))}${col('done', t('Готово'), T.tasks.filter(x => x.status === 'done' || x.status === 'error'))}</div>`);
+  }
+  if (T.plan) parts.push(`<details class="ar-sec" data-k="tplan"><summary>${icon('clipboard')}${t('План и контракты ведущего')}<span class="chev">${icon('chevronRight')}</span></summary><div class="md">${renderMarkdown(T.plan)}</div></details>`);
+  if (T.notes.length) {
+    parts.push(`<details class="ar-sec" data-k="tnotes" open><summary>${icon('message')}${t('Сообщения в TEAM.md')}<span class="tm-badge">${T.notes.length}</span><span class="chev">${icon('chevronRight')}</span></summary>
+      <div class="tm-notes">${T.notes.map((n, i) => { const o = mem(n.mid); return `<div class="tm-note" style="--i:${i}">${o ? provIcon(o.agent) : ''}<div><b>${esc(memName(o) || n.from)}</b><span class="dim"> · ${esc(n.task)}</span><div class="md">${renderMarkdown(n.text)}</div></div></div>`; }).join('')}</div></details>`);
+  }
+  if (T.reviewRes) {
+    const rv = mem(T.reviewRes.mid);
+    parts.push(`<details class="ar-sec" data-k="treview" ${T.result ? '' : 'open'}><summary>${icon(T.reviewRes.ok ? 'check' : 'alert')}${t('Ревью')}: ${esc(memName(rv))}<span class="tm-badge ${T.reviewRes.ok ? 'ok' : ''}">${T.reviewRes.issues.length ? T.reviewRes.issues.length : t('без замечаний')}</span><span class="chev">${icon('chevronRight')}</span></summary>
+      ${T.reviewRes.issues.length ? `<ul class="ar-obj">${T.reviewRes.issues.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}${T.reviewRes.note ? `<div class="md">${renderMarkdown(T.reviewRes.note)}</div>` : ''}</details>`);
+  }
+  if (T.result) {
+    parts.push(`<div class="ar-result">
+      <div class="ar-rhead">${icon('merge')}<span>${t('Собранный результат')}: <b>${T.result.files.length}</b> ${plural(T.result.files.length, [t('файл'), t('файла'), t('файлов')])}</span></div>
+      ${arenaFilesHtml(T.result.files, 'tf')}
+      ${T.conflicts?.length ? `<div class="fallback">${icon('alert')}<div>${t('После запуска Команды эти файлы изменились в папке')}:<small>${esc(T.conflicts.join(', '))}</small></div><button class="btn sm" data-team-apply data-force="1" style="margin-left:auto">${t('Всё равно применить')}</button></div>` : ''}
+      <div class="ar-actions">
+        ${T.applied ? `<span class="ar-applied">${icon('check')}${t('Применено в папку')}</span>` : `<button class="btn primary" data-team-apply>${icon('check')}${t('Применить')}</button>`}
+        <button class="btn" data-team-open>${icon('folderOpen')}${t('Папка команды')}</button>
+      </div></div>`);
+  }
+  return `<div class="arena team ${running ? 'live' : ''}">${parts.join('')}</div>`;
+}
+async function teamAction(tg, m, chat) {
+  const T = m?.team;
+  if (!T) return false;
+  const ap = tg.closest('[data-team-apply]');
+  if (ap) {
+    ap.disabled = true;
+    try {
+      const r = await api.arena.apply({ runId: T.runId, pid: 'team', force: ap.dataset.force === '1' });
+      if (!r.ok) { T.conflicts = r.conflicts; toast(t('Файлы в папке изменились после запуска — проверьте и подтвердите'), true); }
+      else { T.applied = { at: Date.now() }; T.conflicts = null; toast(t('Применено: {n} файлов', { n: r.count })); Workbench.refresh?.(); }
+    } catch (e) { toast(cleanErr(e), true); }
+    persist(chat); updateMessage(chat.id, m.id);
+    return true;
+  }
+  if (tg.closest('[data-team-open]')) { await api.arena.open({ runId: T.runId, pid: 'team' }); return true; }
+  return false;
+}
+// Настройки → Агенты → Команда
+async function teamSettingsHtml() {
+  const R = await api.team.roster().catch(() => null);
+  if (!R) return '';
+  const cfg = { max: 3, review: true, junior: true, lead: null, ...(state.settings.teamCfg || {}) };
+  const inst = new Set(R.agents.filter(a => a.installed).map(a => a.id));
+  const bigs = (R.models || []).filter(m => m.tier === 'big' && inst.has(m.agent));
+  const seg = (k, opts, cur) => `<div class="seg">${opts.map(([v, l]) => `<button data-tm-k="${k}" data-tm-v="${v}" class="${String(cur) === String(v) ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+  return `<h3 class="sub-h" style="display:flex;align-items:center;gap:7px;margin-top:28px">${icon('users')}${t('Команда')}</h3>
+    <p class="hint" style="margin:-4px 0 12px">${t('Ведущий делит задачу на части с чёткими границами по файлам, участники параллельно пишут свои части в общей копии папки, ведущий собирает, другая модель проверяет. Итог применяется кнопкой. Включается кнопкой «Команда» во вкладке «Код».')}</p>
+    <div class="field"><span class="field-label">${t('Состав сейчас')}</span><div class="ar-chips">${R.members.length ? R.members.map(p => `<span class="ar-chip">${provIcon(p.agent)}${esc(prettyModel(p.model) || p.label)}<small>${t(ROLE_NAME[p.role])}</small></span>`).join('') : `<span class="hint">${t('Нет установленных агентов')}</span>`}</div></div>
+    <div class="field"><span class="field-label">${t('Ведущий')}</span>
+      <select class="input" id="tmLead"><option value="">${t('Авто')} — ${esc(R.members[0] ? prettyModel(R.members[0].model) || R.members[0].label : '—')}</option>
+        ${bigs.map(m => `<option value="${m.agent}|${esc(m.model)}" ${cfg.lead?.model === m.model ? 'selected' : ''}>${esc(PROVIDERS[m.agent]?.name || m.agent)} · ${esc(prettyModel(m.model))}</option>`).join('')}</select></div>
+    <div class="field"><span class="field-label">${t('Сколько больших моделей')}</span>${seg('max', [['1', '1'], ['2', '2'], ['3', '3'], ['4', '4']], cfg.max)}</div>
+    <div class="toggle-row" data-tm-k="junior"><span class="switch ${cfg.junior ? 'on' : ''}"></span><span class="tr-text">${t('Младший участник — бесплатная модель OpenCode')}<small>${t('Берёт рутину: заготовки, документацию, тестовые данные')}</small></span></div>
+    <div class="toggle-row" data-tm-k="review"><span class="switch ${cfg.review ? 'on' : ''}"></span><span class="tr-text">${t('Ревью другой моделью')}<small>${t('После сборки другая модель ищет ошибки, ведущий их исправляет')}</small></span></div>`;
+}
+async function saveTeam(patch) {
+  const sb = $('#settingsBody'), y = sb?.scrollTop || 0;
+  await saveSettings({ teamCfg: { ...(state.settings.teamCfg || {}), ...patch } });
+  await renderSettings();
+  if (sb) sb.scrollTop = y;
 }
 
 /* ================= Рассуждение и субагенты ================= */
@@ -1098,7 +1238,7 @@ function submit({ now = false } = {}) {
   const code = chat.kind === 'code';
   const item = { id: uid(), text, mode: code ? 'code' : state.mode,
     images: state.attachments.filter(a => a.kind !== 'file'), files: state.attachments.filter(a => a.kind === 'file'),
-    ultra: !!state.settings.ultra || hasUltraWord(text), arena: code && arenaOn(),
+    ultra: !!state.settings.ultra || hasUltraWord(text), arena: code && arenaOn(), team: code && teamOn() && !arenaOn(),
     research: !!state.flags.research, plan: code && !!state.flags.plan };
   input.value = ''; state.attachments = []; renderAttachments(); syncInput();
   bump();
@@ -1118,7 +1258,7 @@ async function run(chat, item, { retry = false } = {}) {
   const prevAssistant = [...chat.messages].reverse().find(m => m.role === 'assistant' && m.route);
   const history = chat.messages.filter(m => m.text).map(m => ({ role: m.role, text: m.text }));
   if (retry && history.at(-1)?.role === 'user') history.pop();
-  const userMsg = { id: uid(), role: 'user', text: item.text, mode: item.mode, ultra: item.ultra, arena: !!item.arena, research: !!item.research, plan: !!item.plan,
+  const userMsg = { id: uid(), role: 'user', text: item.text, mode: item.mode, ultra: item.ultra, arena: !!item.arena, team: !!item.team, research: !!item.research, plan: !!item.plan,
     images: item.images.map(a => a.thumb), files: (item.files || []).map(f => ({ name: f.name, size: f.size })), at: Date.now() };
   const aMsg = { id: uid(), role: 'assistant', status: 'running', text: '', steps: [], fallbacks: [], files: [], ultra: item.ultra, at: Date.now() };
   if (!retry) chat.messages.push(userMsg);
@@ -1130,7 +1270,7 @@ async function run(chat, item, { retry = false } = {}) {
   pets.react('start');
   try {
     const taskId = await api.task.run({
-      chatId: chat.id, text: item.text || (item.images.length ? t('Опиши изображение') : t('Посмотри приложенные файлы')), mode: item.mode, ultra: item.ultra, effort: state.settings.effort, team: chat.kind === 'code' && !!state.settings.team, arena: !!item.arena,
+      chatId: chat.id, text: item.text || (item.images.length ? t('Опиши изображение') : t('Посмотри приложенные файлы')), mode: item.mode, ultra: item.ultra, effort: state.settings.effort, team: !!item.team, arena: !!item.arena,
       executor: chat.executor || null, agentModel: chat.agentModel || null, chatModel: chat.chatModel || null,
       images: item.images.map(a => ({ mime: a.mime, data: a.data })),
       files: (item.files || []).map(f => ({ name: f.name, mime: f.mime, data: f.data })),
@@ -1195,6 +1335,7 @@ async function onTaskEvent(ev) {
       break;
     }
     case 'arena': arenaEvent(m, ev); break;
+    case 'team': teamEvent(m, ev); break;
     case 'todos': chat.todos = ev.todos; break;
     case 'context': chat.context = { used: ev.used, window: ev.window || chat.context?.window || null, compactAt: ev.compactAt || null, model: ev.model || null, at: Date.now() }; if (currentChat() === chat) renderCtx(); break;
     case 'limits': setLimits(ev.provider, { status: ev.status, windows: ev.windows, at: ev.at || Date.now() }); break;
@@ -1278,7 +1419,7 @@ function retry(msgId) {
   const user = chat.messages.slice(0, idx).reverse().find(m => m.role === 'user');
   if (!user) return;
   chat.messages.splice(idx, 1);
-  run(chat, { text: user.text, mode: user.mode || 'auto', images: [], ultra: !!user.ultra, arena: !!user.arena }, { retry: true });
+  run(chat, { text: user.text, mode: user.mode || 'auto', images: [], ultra: !!user.ultra, arena: !!user.arena, team: !!user.team, research: !!user.research, plan: !!user.plan }, { retry: true });
 }
 
 /* ================= Композер ================= */
@@ -1351,7 +1492,9 @@ function renderMeta() {
   renderCtx();
   const tb = $('#teamBtn');
   tb.classList.toggle('hidden', !code);
-  tb.classList.toggle('on', !!state.settings.team);
+  tb.classList.toggle('on', teamOn() && !arenaOn());
+  tb.title = t('Команда: несколько нейросетей вместе пишут один проект — ведущий делит задачу, участники пишут свои части, другая модель проверяет');
+  $('#composer').classList.toggle('team-on', code && teamOn() && !arenaOn());
   const ab = $('#arenaBtn');
   ab.classList.toggle('hidden', !code);
   ab.classList.toggle('on', arenaOn());
@@ -2325,7 +2468,8 @@ async function renderSettings() {
       <div class="field" style="margin-top:16px"><label>${t('Папка для новых сессий')}</label>
         <div class="row"><input class="input mono" id="wsRoot" value="${esc(s.workspaceRoot)}" spellcheck="false"><button class="btn" id="wsPick">${icon('folder')}${t('Выбрать')}</button></div>
         <div class="hint">${t('Если окружение не выбрано, агент работает в отдельной подпапке здесь.')}</div></div>
-      ${await arenaSettingsHtml()}`;
+      ${await arenaSettingsHtml()}
+      ${await teamSettingsHtml()}`;
   }
   if (stab === 'net') {
     const n = s.net || {};
@@ -2604,6 +2748,15 @@ function bindSettings(body) {
     if (i >= 0) roster.splice(i, 1); else roster.push({ agent: b.dataset.arAgent, model: b.dataset.arModel, on: true });
     saveArena({ roster });
   }));
+  all('[data-tm-k]', b => b.addEventListener('click', () => {
+    const k = b.dataset.tmK, v = b.dataset.tmV;
+    const cur = { max: 3, review: true, junior: true, ...(state.settings.teamCfg || {}) };
+    saveTeam({ [k]: k === 'max' ? Number(v) : !cur[k] });
+  }));
+  on('#tmLead', 'change', (e) => {
+    const [agent, model] = e.target.value ? e.target.value.split('|') : [];
+    saveTeam({ lead: agent ? { agent, model } : null });
+  });
   on('#arDisp', 'change', (e) => {
     const [agent, model] = e.target.value ? e.target.value.split('|') : [];
     saveArena({ dispatcher: agent ? { agent, model } : null });
@@ -2775,15 +2928,21 @@ function bindUI() {
   $('#ultraBtn').addEventListener('click', toggleUltra);
   $('#effortBtn').addEventListener('click', effortMenu);
   $('#teamBtn').addEventListener('click', async () => {
-    const on = !state.settings.team;
-    state.settings = await api.settings.set({ team: on });
+    const on = !teamOn();
+    // Команда и Арена — разные режимы, одновременно не работают
+    state.settings = await api.settings.set(on ? { team: true, arena: { ...(state.settings.arena || {}), on: false } } : { team: false });
     renderMeta();
-    toast(on ? t('Команда: Claude Code будет раздавать части задачи субагентам') : t('Команда выключена'));
-    if (on) { const b = $('#teamBtn').getBoundingClientRect(); sparks(b.left + b.width / 2, b.top + b.height / 2); }
+    if (on) {
+      const r = await api.team.roster().catch(() => null);
+      const who = r?.members?.map(p => prettyModel(p.model) || p.label).join(', ');
+      toast(who ? t('Команда: {who}', { who }) : t('Команда включена'));
+      const b = $('#teamBtn').getBoundingClientRect(); sparks(b.left + b.width / 2, b.top + b.height / 2);
+      pets.react('ultra');
+    } else toast(t('Команда выключена'));
   });
   $('#arenaBtn').addEventListener('click', async () => {
     const on = !arenaOn();
-    state.settings = await api.settings.set({ arena: { ...(state.settings.arena || {}), on } });
+    state.settings = await api.settings.set({ arena: { ...(state.settings.arena || {}), on }, ...(on ? { team: false } : {}) });
     renderMeta();
     if (on) {
       const r = await api.arena.roster().catch(() => null);
@@ -2871,6 +3030,7 @@ function bindUI() {
     const cc = tg.closest('[data-copy-code]');
     if (cc) { await navigator.clipboard.writeText(cc.closest('.codeblock').querySelector('code').textContent); cc.innerHTML = `${icon('check')}<span>${t('Скопировано')}</span>`; setTimeout(() => { cc.innerHTML = `${icon('copy')}<span>${t('Копировать')}</span>`; }, 1500); return; }
     if (m?.arena && await arenaAction(tg, m, chat)) return;
+    if (m?.team && await teamAction(tg, m, chat)) return;
     if (tg.closest('[data-retry]') && m && !isRunning(chat.id)) return retry(m.id);
   });
   document.addEventListener('dblclick', (e) => { const r = e.target.closest('.row-item[data-chat]'); if (r) renameChat(r.dataset.chat); });

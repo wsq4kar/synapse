@@ -304,7 +304,7 @@
     // метки из основного процесса (для сохранённых чатов)
     'выбрано вручную': 'chosen manually', 'по ключевым словам': 'by keywords', 'правка приложенного изображения': 'editing the attached image',
     'решил Gemini': 'decided by Gemini', 'продолжение задачи': 'continuing the task', 'к чату привязана папка': 'folder linked to chat', 'обычный вопрос': 'regular question',
-    'лимит подписки': 'subscription limit', 'Команда': 'Command', 'Изменение файлов': 'File changes', 'Инструмент': 'Tool', 'Размышление': 'Reasoning',
+    'лимит подписки': 'subscription limit', 'Команда запуска': 'Command', 'Изменение файлов': 'File changes', 'Инструмент': 'Tool', 'Размышление': 'Reasoning',
     'В режиме «Правки файлов» агенту нельзя запускать команды.': 'In “File edits” mode the agent cannot run commands.',
     'Разрешить и повторить': 'Allow and retry',
     'Effort — сколько думать': 'Effort — how hard to think', 'Effort — сколько думать (Ctrl+E)': 'Effort — how hard to think (Ctrl+E)',

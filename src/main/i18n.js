@@ -106,7 +106,7 @@ const EN = {
   'решил Gemini': 'decided by Gemini', 'продолжение задачи': 'continuing the task', 'к чату привязана папка': 'folder linked to chat', 'обычный вопрос': 'regular question',
   'Неизвестный исполнитель {id}': 'Unknown executor {id}', 'Небезопасный путь к {name}': 'Unsafe path to {name}',
   'Процесс завершился с кодом {code}': 'Process exited with code {code}',
-  'Команда': 'Command', 'Изменение файлов': 'File changes', 'Инструмент': 'Tool', 'Поиск': 'Search', 'Размышление': 'Reasoning', 'Ошибка Codex': 'Codex error', 'Ошибка OpenCode': 'OpenCode error',
+  'Команда': 'Team', 'Изменение файлов': 'File changes', 'Инструмент': 'Tool', 'Поиск': 'Search', 'Размышление': 'Reasoning', 'Ошибка Codex': 'Codex error', 'Ошибка OpenCode': 'OpenCode error',
   'Некорректное имя модели: {m}': 'Invalid model name: {m}',
   'Не задан ключ Google AI Studio. Добавьте его в настройках.': 'No Google AI Studio key set. Add it in settings.',
   'Запрос отклонён': 'Request rejected', 'Ключ не подошёл': 'Key rejected',
