@@ -13,6 +13,7 @@ const tokens = require('./tokens');
 const cli = require('./executors/cli');
 const discord = require('./discord');
 const team = require('./team');
+const history = require('./history');
 const ws = require('./workspace');
 const tunnel = require('./tunnel');
 const netproxy = require('./netproxy');
@@ -116,6 +117,7 @@ app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(
 
 app.whenReady().then(() => {
   discord.configure(store.getSettings().discord || {}, app.getVersion());
+  try { history.init(path.join(store.dirs().root, 'history')); } catch { /* без истории */ }
   Menu.setApplicationMenu(null);
   const mediaRoot = path.resolve(store.dirs().media);
   protocol.handle('media', (req) => {
@@ -360,6 +362,9 @@ ipcMain.handle('screen:capture', async () => {
 });
 ipcMain.handle('discord:view', (_e, v) => { discord.setView(v || {}); return true; });
 ipcMain.handle('discord:status', () => discord.status());
+ipcMain.handle('history:list', (_e, { cwd } = {}) => history.list(cwd || null));
+ipcMain.handle('history:diff', (_e, { id }) => history.diff(id));
+ipcMain.handle('history:restore', (_e, { id, to, force }) => history.restore(id, to, !!force));
 ipcMain.handle('task:cancel', (_e, taskId) => { tasks.get(taskId)?.abort(); return true; });
 ipcMain.handle('task:run', (_e, input) => {
   const taskId = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -672,7 +677,14 @@ ipcMain.handle('arena:roster', async () => {
   const agents = cliCache || (cliCache = await cli.detect(settings.cliPaths));
   return { ...arena.roster(settings, agents), agents: agents.map(a => ({ id: a.id, label: a.label, installed: a.installed })) };
 });
-ipcMain.handle('arena:apply', (_e, { runId, pid, force } = {}) => arena.apply(arenaRoot(), runId, pid, !!force));
+ipcMain.handle('arena:apply', (_e, { runId, pid, force } = {}) => {
+  // применение Арены/Команды тоже попадает в историю — его можно откатить
+  let snap = null;
+  try { if (/^[at][a-z0-9]+$/.test(runId || '')) snap = history.before(JSON.parse(fs.readFileSync(path.join(arenaRoot(), runId, 'meta.json'), 'utf8')).cwd); } catch { /* без истории */ }
+  const r = arena.apply(arenaRoot(), runId, pid, !!force);
+  if (r.ok && snap) { try { r.point = history.after(snap, { kind: 'apply', label: runId.startsWith('t') ? t('Команда') : t('Арена') }); } catch { /* без истории */ } }
+  return r;
+});
 ipcMain.handle('arena:files', (_e, { runId, pid } = {}) => arena.variantFiles(arenaRoot(), runId, pid));
 ipcMain.handle('arena:open', (_e, { runId, pid } = {}) => { const d = arena.variantDir(arenaRoot(), runId, pid); if (d && fs.existsSync(d)) shell.openPath(d); return !!d; });
 
@@ -802,6 +814,15 @@ async function runCode(taskId, input, settings, text, images, signal, log) {
   if (orKey) extraEnv.OPENROUTER_API_KEY = orKey;
   const sessions = sessionsOf(input);
   let lastErr = null;
+  // История файлов: снимок до работы агента, точка восстановления — после (и при ошибке, если агент успел что-то поменять)
+  const snap = history.before(cwd);
+  let pointSent = false;
+  const checkpoint = (executor) => {
+    if (pointSent) return;
+    pointSent = true;
+    try { const point = history.after(snap, { chatId: input.chatId, executor, label: cli.LABELS[executor] || executor }); if (point) send(taskId, { kind: 'checkpoint', point }); } catch { /* история — не главное */ }
+  };
+  try {
   for (let i = 0; i < queue.length; i++) {
     const id = queue[i];
     // своя сессия агента: история и кэш уже у него — пересылаем только новое сообщение
@@ -835,6 +856,7 @@ async function runCode(taskId, input, settings, text, images, signal, log) {
 
     if (r.ok) {
       log({ executor: id, ok: true, cost: r.cost, ultra: !!input.ultra, usage: r.usage, model: r.usage?.model || (id === input.executor ? input.agentModel : null) || null });
+      checkpoint(id);
       return send(taskId, { kind: 'done', text: r.text, executor: id, sessionId: r.sessionId, cost: r.cost, cwd, usage: r.usage, context: r.context });
     }
     if (r.aborted) throw Object.assign(new Error(t('Остановлено')), { code: 'aborted' });
@@ -847,6 +869,7 @@ async function runCode(taskId, input, settings, text, images, signal, log) {
     }
   }
   throw new Error(lastErr || t('Агенты не смогли выполнить задачу'));
+  } finally { checkpoint(queue[queue.length - 1]); }
 }
 
 // Краткий контекст разговора для агента без своей сессии: код из ответов свёрнут, длинное сокращено

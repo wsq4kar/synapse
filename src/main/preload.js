@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('synapse', {
   },
   arena: { roster: invoke('arena:roster'), apply: invoke('arena:apply'), files: invoke('arena:files'), open: invoke('arena:open') },
   team: { roster: invoke('team:roster') },
+  history: { list: invoke('history:list'), diff: invoke('history:diff'), restore: invoke('history:restore') },
   open: invoke('shell:open'),
   openUrl: invoke('shell:url'),
   reveal: invoke('shell:reveal'),

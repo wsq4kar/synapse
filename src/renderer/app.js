@@ -517,6 +517,7 @@ function fillAssistant(el, m) {
   if (!running && m.route === 'code' && state.settings.agentAccess !== 'full' && steps.some(s => s.tool === 'run' && s.status === 'error')) {
     parts.push(`<div class="fallback">${icon('alert')}<div>${t('В режиме «Правки файлов» агенту нельзя запускать команды.')}</div><button class="btn sm" data-allow-run style="margin-left:auto">${t('Разрешить и повторить')}</button></div>`);
   }
+  if (m.point && !running) parts.push(pointHtml(m.point, m.id));
   if (m.error) parts.push(`<div class="err">${icon('alert')}<span>${esc(m.error)}</span>${m.code === 'no_key' ? `<button class="btn sm" data-open-settings="api">${t('Настройки')}</button>` : ['proxy', 'network', 'region'].includes(m.code) ? `<button class="btn sm" data-open-settings="net">${t('Настроить сеть')}</button>` : ''}</div>`);
   if (!running) {
     parts.push(`<div class="msg-actions">
@@ -529,7 +530,7 @@ function fillAssistant(el, m) {
     </div>`);
   }
   el.innerHTML = parts.join('');
-  if (m.arena || m.team) keepDetails(el, m.id);
+  if (m.arena || m.team || m.point) keepDetails(el, m.id);
   enhanceCode(el);
   applyFx(el.querySelector('.md'), m);
   steps.forEach(s => fx.seen.add(s.id));
@@ -654,7 +655,7 @@ function arenaHtml(m, running) {
       ${arenaFilesHtml(A.result.files)}
       ${A.conflicts?.length ? `<div class="fallback">${icon('alert')}<div>${t('После запуска Арены эти файлы изменились в папке')}:<small>${esc(A.conflicts.join(', '))}</small></div><button class="btn sm" data-arena-apply="${A.applyPid || A.winner}" data-force="1" style="margin-left:auto">${t('Всё равно применить')}</button></div>` : ''}
       <div class="ar-actions">
-        ${A.applied ? `<span class="ar-applied">${icon('check')}${t('Применено в папку')}${A.applied.pid !== A.winner ? ` (${esc(arenaName(arenaPart(A, A.applied.pid)))})` : ''}</span>`
+        ${A.applied ? `<span class="ar-applied">${icon('check')}${t('Применено в папку')}${A.applied.pid !== A.winner ? ` (${esc(arenaName(arenaPart(A, A.applied.pid)))})` : ''}</span>${A.point ? undoBtn(A.point) : ''}`
           : `<button class="btn primary" data-arena-apply="${A.winner}">${icon('check')}${t('Применить')}</button>`}
         <button class="btn" data-arena-open="${A.winner}">${icon('folderOpen')}${t('Папка варианта')}</button>
         ${others.map(v => `<button class="btn ghost" data-arena-variant="${v.id}">${provIcon(arenaPart(A, v.id)?.agent)}${esc(arenaName(arenaPart(A, v.id)))}</button>`).join('')}
@@ -717,7 +718,7 @@ async function arenaAction(tg, m, chat) {
     try {
       const r = await api.arena.apply({ runId: A.runId, pid, force: ap.dataset.force === '1' });
       if (!r.ok) { A.conflicts = r.conflicts; A.applyPid = pid; toast(t('Файлы в папке изменились после запуска — проверьте и подтвердите'), true); }
-      else { A.applied = { pid, at: Date.now() }; A.conflicts = null; toast(t('Применено: {n} файлов', { n: r.count })); Workbench.refresh?.(); }
+      else { A.applied = { pid, at: Date.now() }; A.point = r.point || null; A.conflicts = null; toast(t('Применено: {n} файлов', { n: r.count })); Workbench.refresh?.(); }
     } catch (e) { toast(cleanErr(e), true); }
     persist(chat); updateMessage(chat.id, m.id);
     return true;
@@ -823,7 +824,7 @@ function teamHtml(m, running) {
       ${arenaFilesHtml(T.result.files, 'tf')}
       ${T.conflicts?.length ? `<div class="fallback">${icon('alert')}<div>${t('После запуска Команды эти файлы изменились в папке')}:<small>${esc(T.conflicts.join(', '))}</small></div><button class="btn sm" data-team-apply data-force="1" style="margin-left:auto">${t('Всё равно применить')}</button></div>` : ''}
       <div class="ar-actions">
-        ${T.applied ? `<span class="ar-applied">${icon('check')}${t('Применено в папку')}</span>` : `<button class="btn primary" data-team-apply>${icon('check')}${t('Применить')}</button>`}
+        ${T.applied ? `<span class="ar-applied">${icon('check')}${t('Применено в папку')}</span>${T.point ? undoBtn(T.point) : ''}` : `<button class="btn primary" data-team-apply>${icon('check')}${t('Применить')}</button>`}
         <button class="btn" data-team-open>${icon('folderOpen')}${t('Папка команды')}</button>
       </div></div>`);
   }
@@ -838,7 +839,7 @@ async function teamAction(tg, m, chat) {
     try {
       const r = await api.arena.apply({ runId: T.runId, pid: 'team', force: ap.dataset.force === '1' });
       if (!r.ok) { T.conflicts = r.conflicts; toast(t('Файлы в папке изменились после запуска — проверьте и подтвердите'), true); }
-      else { T.applied = { at: Date.now() }; T.conflicts = null; toast(t('Применено: {n} файлов', { n: r.count })); Workbench.refresh?.(); }
+      else { T.applied = { at: Date.now() }; T.point = r.point || null; T.conflicts = null; toast(t('Применено: {n} файлов', { n: r.count })); Workbench.refresh?.(); }
     } catch (e) { toast(cleanErr(e), true); }
     persist(chat); updateMessage(chat.id, m.id);
     return true;
@@ -869,6 +870,98 @@ async function saveTeam(patch) {
   await saveSettings({ teamCfg: { ...(state.settings.teamCfg || {}), ...patch } });
   await renderSettings();
   if (sb) sb.scrollTop = y;
+}
+
+/* ================= История файлов ================= */
+const histDiffs = new Map(); // id → diff по файлам (загружается при раскрытии)
+const histSure = new Set();
+function undoBtn(p) {
+  if (p.reverted) return `<button class="btn sm ghost" data-hist-restore="${p.id}" data-to="after">${icon('retry')}${t('Вернуть изменения')}</button>`;
+  return histSure.has(p.id)
+    ? `<button class="btn sm danger" data-hist-restore="${p.id}" data-to="before">${icon('undo')}${t('Точно откатить?')}</button>`
+    : `<button class="btn sm" data-hist-sure="${p.id}">${icon('undo')}${t('Откатить')}</button>`;
+}
+function pointHtml(p, mid) {
+  const K = { add: ['A', t('новый')], mod: ['M', t('изменён')], del: ['D', t('удалён')] };
+  const d = histDiffs.get(p.id);
+  const files = p.files.slice(0, 40).map(f => {
+    const fd = d?.find(x => x.rel === f.rel);
+    return `<details class="ar-file ${f.kind}" data-k="h:${esc(f.rel)}" data-hist-file="${p.id}">
+      <summary><span class="ar-k">${K[f.kind][0]}</span><span class="ar-rel" title="${esc(f.rel)}">${esc(f.rel)}</span>
+        <span class="ar-stat">${fd?.add ? `<i class="a">+${fd.add}</i>` : ''}${fd?.del ? `<i class="d">−${fd.del}</i>` : ''}</span><span class="chev">${icon('chevronRight')}</span></summary>
+      ${fd ? diffHtml(fd.diff) : `<div class="hist-load"><span class="ext-spin"></span></div>`}</details>`;
+  }).join('');
+  return `<details class="hist ${p.reverted ? 'reverted' : ''}" data-k="hist">
+    <summary>${icon('history')}<span>${p.reverted ? t('Изменения откачены') : t('Изменения в файлах')}</span><span class="tm-badge">${p.files.length}</span>
+      <span class="hist-acts">${undoBtn(p)}</span><span class="chev">${icon('chevronRight')}</span></summary>
+    ${p.conflicts?.length ? `<div class="fallback">${icon('alert')}<div>${t('Эти файлы изменились после агента')}:<small>${esc(p.conflicts.join(', '))}</small></div><button class="btn sm" data-hist-restore="${p.id}" data-to="${p.reverted ? 'after' : 'before'}" data-force="1" style="margin-left:auto">${t('Всё равно')}</button></div>` : ''}
+    <div class="ar-files">${files}</div></details>`;
+}
+function findPoint(m, id) {
+  for (const p of [m?.point, m?.arena?.point, m?.team?.point]) if (p && p.id === id) return p;
+  return null;
+}
+async function histAction(tg, m, chat) {
+  if (!m || !chat) return false;
+  const sure = tg.closest('[data-hist-sure]');
+  if (sure) {
+    const id = sure.dataset.histSure;
+    histSure.add(id); updateMessage(chat.id, m.id);
+    setTimeout(() => { if (histSure.delete(id)) updateMessage(chat.id, m.id); }, 4000);
+    return true;
+  }
+  const rs = tg.closest('[data-hist-restore]');
+  if (rs) {
+    const id = rs.dataset.histRestore, p = findPoint(m, id);
+    histSure.delete(id);
+    rs.disabled = true;
+    try {
+      const r = await api.history.restore({ id, to: rs.dataset.to, force: rs.dataset.force === '1' });
+      if (!r.ok) { if (p) p.conflicts = r.conflicts; toast(t('Файлы изменились после агента — проверьте и подтвердите'), true); }
+      else { if (p) { p.reverted = r.reverted ? { at: Date.now() } : null; p.conflicts = null; } toast(r.reverted ? t('Откачено: {n} файлов', { n: r.count }) : t('Изменения возвращены: {n} файлов', { n: r.count })); Workbench.refresh?.(); }
+    } catch (e) { toast(cleanErr(e), true); }
+    persist(chat); updateMessage(chat.id, m.id);
+    return true;
+  }
+  const hf = tg.closest('[data-hist-file] > summary');
+  if (hf) {
+    const id = hf.parentElement.dataset.histFile;
+    if (!histDiffs.has(id)) {
+      try { histDiffs.set(id, await api.history.diff({ id })); } catch (e) { histDiffs.set(id, []); toast(cleanErr(e), true); }
+      setTimeout(() => updateMessage(chat.id, m.id), 30);
+    }
+    return false; // раскрытие <details> — штатное
+  }
+  return false;
+}
+// /history: точки восстановления этой папки
+async function historyMenu() { menu($('#plusBtn'), await historyItems()); }
+async function historyItems() {
+  const chat = currentChat();
+  const list = await api.history.list({ cwd: chat?.cwd || null }).catch(() => []);
+  const fmt = (ts) => new Date(ts).toLocaleString(I18N.lang === 'en' ? 'en-GB' : 'ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  return list.length ? [
+    { label: chat?.cwd ? t('История файлов: {p}', { p: shortPath(chat.cwd) }) : t('История файлов') },
+    ...list.slice(0, 15).map(p => ({
+      icon: p.reverted ? 'retry' : 'history', text: `${fmt(p.at)} · ${p.label || t('агент')}`, hint: `${p.files.length} ${plural(p.files.length, [t('файл'), t('файла'), t('файлов')])}${p.reverted ? ' · ' + t('откачено') : ''}`,
+      sub: () => [
+        { label: p.files.slice(0, 6).map(f => f.rel).join(', ') + (p.files.length > 6 ? '…' : '') },
+        p.reverted
+          ? { icon: 'retry', text: t('Вернуть изменения'), check: false, act: () => quickRestore(p.id, 'after') }
+          : { icon: 'undo', text: t('Откатить эти изменения'), check: false, danger: true, act: () => quickRestore(p.id, 'before') },
+      ],
+    })),
+  ] : [{ label: t('Пока нет точек восстановления — они появятся после работы агента в папке') }];
+}
+async function quickRestore(id, to) {
+  try {
+    const r = await api.history.restore({ id, to });
+    if (!r.ok) return toast(t('Файлы изменились после агента: {f}', { f: r.conflicts.slice(0, 4).join(', ') }), true);
+    toast(r.reverted ? t('Откачено: {n} файлов', { n: r.count }) : t('Изменения возвращены: {n} файлов', { n: r.count }));
+    const c = currentChat();
+    for (const m of c?.messages || []) { const p = findPoint(m, id); if (p) { p.reverted = r.reverted ? { at: Date.now() } : null; persist(c); updateMessage(c.id, m.id); } }
+    Workbench.refresh?.();
+  } catch (e) { toast(cleanErr(e), true); }
 }
 
 /* ================= Рассуждение и субагенты ================= */
@@ -1336,6 +1429,7 @@ async function onTaskEvent(ev) {
     }
     case 'arena': arenaEvent(m, ev); break;
     case 'team': teamEvent(m, ev); break;
+    case 'checkpoint': m.point = ev.point; break;
     case 'todos': chat.todos = ev.todos; break;
     case 'context': chat.context = { used: ev.used, window: ev.window || chat.context?.window || null, compactAt: ev.compactAt || null, model: ev.model || null, at: Date.now() }; if (currentChat() === chat) renderCtx(); break;
     case 'limits': setLimits(ev.provider, { status: ev.status, windows: ev.windows, at: ev.at || Date.now() }); break;
@@ -1740,7 +1834,7 @@ const Slash = (() => {
         { cmd: 'arena', icon: 'swords', text: t('Арена'), hint: arenaOn() ? t('вкл') : '', run: () => $('#arenaBtn').click() },
         { cmd: 'team', icon: 'users', text: t('Команда нейросетей'), hint: state.settings.team ? t('вкл') : '', run: () => $('#teamBtn').click() },
         { cmd: 'plan', icon: 'clipboard', text: t('Режим плана'), hint: state.flags.plan ? t('вкл') : '', run: () => setFlag('plan', !state.flags.plan) },
-        { cmd: 'history', icon: 'history', text: t('История файлов'), run: () => Workbench.toggle(true) },
+        { cmd: 'history', icon: 'history', text: t('История файлов и откат'), run: () => historyMenu() },
       ] : [
         { cmd: 'image', icon: 'image', text: t('Создать изображение'), run: () => { state.mode = 'image'; renderMeta(); } },
         { cmd: 'video', icon: 'video', text: t('Создать видео'), run: () => { state.mode = 'video'; renderMeta(); } },
@@ -1899,6 +1993,7 @@ function plusMenu() {
     { icon: 'camera', text: t('Снимок экрана'), check: false, act: takeScreenshot },
     { icon: 'folderPlus', text: chat.cwd ? t('Сменить папку…') : t('Добавить папку…'), check: false, act: pickFolder },
     ...(chat.cwd ? [{ icon: 'x', text: t('Отвязать папку'), check: false, act: () => setCwd(null) }] : []),
+    ...(code ? [{ icon: 'history', text: t('История файлов'), sub: historyItems }] : []),
     '-',
     { icon: 'book', text: t('Скиллы'), sub: skillsSub },
     { icon: 'plug', text: t('Коннекторы'), sub: connectorsSub },
@@ -3031,6 +3126,7 @@ function bindUI() {
     if (cc) { await navigator.clipboard.writeText(cc.closest('.codeblock').querySelector('code').textContent); cc.innerHTML = `${icon('check')}<span>${t('Скопировано')}</span>`; setTimeout(() => { cc.innerHTML = `${icon('copy')}<span>${t('Копировать')}</span>`; }, 1500); return; }
     if (m?.arena && await arenaAction(tg, m, chat)) return;
     if (m?.team && await teamAction(tg, m, chat)) return;
+    if (await histAction(tg, m, chat)) return;
     if (tg.closest('[data-retry]') && m && !isRunning(chat.id)) return retry(m.id);
   });
   document.addEventListener('dblclick', (e) => { const r = e.target.closest('.row-item[data-chat]'); if (r) renameChat(r.dataset.chat); });

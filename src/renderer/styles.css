@@ -1325,3 +1325,19 @@ details[open] > :not(summary) { animation: arIn .35s var(--spring) both; }
 @media (prefers-reduced-motion: reduce) { .tm-task, .tm-note, .team-btn.on .ic { animation: none; } }
 .rm .tm-task, .rm .tm-note, .rm .team-btn.on .ic { animation: none; }
 .arena.team { container-type: inline-size; }
+
+/* история файлов */
+.hist { margin: 2px 0 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--raised); overflow: hidden; animation: arIn .45s var(--spring) both; }
+.hist > summary { display: flex; align-items: center; gap: 8px; padding: 7px 10px 7px 12px; font-size: 12.5px; cursor: pointer; list-style: none; }
+.hist > summary::-webkit-details-marker { display: none; }
+.hist > summary > .ic { width: 15px; height: 15px; color: var(--accent); }
+.hist > summary .tm-badge { margin-left: 0; }
+.hist-acts { margin-left: auto; display: flex; gap: 6px; }
+.hist > summary .chev { display: inline-flex; color: var(--muted); transition: transform .3s var(--spring); }
+.hist > summary .chev .ic { width: 14px; height: 14px; }
+.hist .ar-files { padding: 0 8px 8px; }
+.hist.reverted > summary > .ic { color: var(--muted); }
+.hist.reverted > summary > span:first-of-type { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
+.hist .fallback { margin: 0 8px 8px; }
+.hist-load { display: flex; justify-content: center; padding: 10px; color: var(--muted); }
+.btn.sm.danger { animation: pop .35s var(--spring-bouncy) both; }
