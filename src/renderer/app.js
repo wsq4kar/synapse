@@ -329,7 +329,36 @@ function render() {
   Workbench.sync(v.type === 'chat' ? currentChat() : null);
 }
 
+// Discord: что открыто в окне (без названий чатов и текста задач)
+let discordKey = '';
+function syncDiscord() {
+  const v = state.view, chat = v.type === 'chat' ? currentChat() : null;
+  const info = { view: chat ? (chat.kind === 'code' ? 'code' : 'chat') : v.type, project: chat?.cwd || null };
+  const k = JSON.stringify(info);
+  if (k === discordKey) return;
+  discordKey = k;
+  api.discord?.view(info).catch(() => {});
+}
+function discordHtml(s) {
+  const d = { on: true, showModel: true, showProject: false, ...(s.discord || {}) };
+  return `<div class="field-label dc-head" style="margin-top:22px">${t('Статус в Discord')}<span class="dc-state" id="dcState"></span></div>
+    <div class="toggle-row" data-dc="on"><span class="switch ${d.on ? 'on' : ''}"></span>
+      <span class="tr-text">${t('Показывать в Discord, что вы в Synapse')}<small>${t('«Играет в Synapse»: чат, код, Арена или Команда, агент и время. Текст задач и названия чатов не показываются.')}</small></span></div>
+    <div class="toggle-row ${d.on ? '' : 'dim-row'}" data-dc="showModel"><span class="switch ${d.showModel ? 'on' : ''}"></span>
+      <span class="tr-text">${t('Показывать модель')}<small>${t('Например, «Claude Code · Opus 5.5»')}</small></span></div>
+    <div class="toggle-row ${d.on ? '' : 'dim-row'}" data-dc="showProject"><span class="switch ${d.showProject ? 'on' : ''}"></span>
+      <span class="tr-text">${t('Показывать название папки проекта')}</span></div>`;
+}
+async function refreshDiscordState() {
+  const el = $('#dcState'); if (!el) return;
+  try {
+    const st = await api.discord.status();
+    el.className = `dc-state ${st.connected ? 'ok' : ''}`;
+    el.textContent = !st.enabled ? t('выключено') : st.connected ? t('подключено') : t('Discord не найден — подключусь, когда он запустится');
+  } catch { el.textContent = ''; }
+}
 function renderCrumbs() {
+  syncDiscord();
   const v = state.view;
   const el = $('#crumbs');
   if (v.type === 'chat') {
@@ -1549,6 +1578,91 @@ function closePopovers() {
   if (popClose) { const f = popClose; popClose = null; f(); }
 }
 
+/* ================= Slash-команды ================= */
+// «/» в начале поля ввода: меню команд с поиском, стрелками, Enter/Tab и Esc
+const Slash = (() => {
+  let items = [], idx = 0, open = false, skillsCache = null, skillsAt = 0;
+  const pop = () => $('#slashPop');
+  const close = () => { open = false; pop()?.classList.remove('open'); document.body.classList.remove('slash-open'); };
+  const clearCmd = () => { const el = $('#input'); el.value = el.value.replace(/^\/\S*\s?/, ''); syncInput(); };
+  function commands() {
+    const chat = currentChat();
+    const code = chat?.kind === 'code';
+    const cmds = [
+      { cmd: 'new', icon: 'plus', text: t('Новый чат'), run: () => newChat(state.tab) },
+      { cmd: 'model', icon: 'bot', text: t('Выбрать агента и модель'), run: () => agentMenu() },
+      { cmd: 'effort', icon: 'brain', text: t('Effort — сколько думать'), run: () => effortMenu() },
+      { cmd: 'ultra', icon: 'zap', text: t('Ultra — максимум усилий'), hint: state.settings.ultra ? t('вкл') : '', run: () => toggleUltra() },
+      ...(code ? [
+        { cmd: 'arena', icon: 'swords', text: t('Арена'), hint: arenaOn() ? t('вкл') : '', run: () => $('#arenaBtn').click() },
+        { cmd: 'team', icon: 'users', text: t('Команда нейросетей'), hint: state.settings.team ? t('вкл') : '', run: () => $('#teamBtn').click() },
+        { cmd: 'plan', icon: 'clipboard', text: t('Режим плана'), hint: state.flags.plan ? t('вкл') : '', run: () => setFlag('plan', !state.flags.plan) },
+        { cmd: 'history', icon: 'history', text: t('История файлов'), run: () => Workbench.toggle(true) },
+      ] : [
+        { cmd: 'image', icon: 'image', text: t('Создать изображение'), run: () => { state.mode = 'image'; renderMeta(); } },
+        { cmd: 'video', icon: 'video', text: t('Создать видео'), run: () => { state.mode = 'video'; renderMeta(); } },
+      ]),
+      { cmd: 'research', icon: 'globe', text: t('Исследование'), hint: state.flags.research ? t('вкл') : '', run: () => setFlag('research', !state.flags.research) },
+      { cmd: 'attach', icon: 'paperclip', text: t('Прикрепить файлы'), run: () => $('#fileInput').click() },
+      { cmd: 'screenshot', icon: 'camera', text: t('Снимок экрана'), run: () => takeScreenshot() },
+      { cmd: 'folder', icon: 'folderPlus', text: t('Выбрать папку…'), run: () => pickFolder() },
+      { cmd: 'extensions', icon: 'puzzle', text: t('Расширения'), run: () => go({ type: 'extensions' }) },
+      { cmd: 'stats', icon: 'chart', text: t('Статистика'), run: () => go({ type: 'stats' }) },
+      { cmd: 'settings', icon: 'settings', text: t('Настройки'), run: () => openSettings() },
+    ];
+    for (const sk of skillsCache || []) {
+      if (cmds.some(c => c.cmd === sk.name)) continue;
+      cmds.push({ cmd: sk.name, icon: 'book', text: sk.description || t('Скилл'), skill: true, run: () => insertText(t('Используй скилл «{n}». ', { n: sk.name })) });
+    }
+    return cmds;
+  }
+  async function loadSkills() {
+    if (Date.now() - skillsAt < 30000) return;
+    skillsAt = Date.now();
+    try { const r = await api.ext.skills({ cwd: currentChat()?.cwd || null }); const seen = new Set(); skillsCache = (r.skills || []).filter(s => !seen.has(s.name) && seen.add(s.name)); } catch { skillsCache = []; }
+    if (open) update();
+  }
+  function render() {
+    const el = pop();
+    el.innerHTML = items.map((c, i) => `<button class="sl-item ${i === idx ? 'on' : ''}" data-sl="${i}" style="--i:${i}">${icon(c.icon)}<span class="sl-cmd">/${esc(c.cmd)}</span><span class="sl-text">${esc(c.text)}</span>${c.hint ? `<span class="sl-hint">${esc(c.hint)}</span>` : ''}${c.skill ? `<span class="sl-tag">${t('скилл')}</span>` : ''}</button>`).join('')
+      || `<div class="sl-empty">${t('Нет такой команды')}</div>`;
+    el.querySelector('.sl-item.on')?.scrollIntoView({ block: 'nearest' });
+  }
+  function update() {
+    const v = $('#input').value;
+    const m = /^\/([\w.-]*)$/.exec(v);
+    if (!m) return close();
+    loadSkills();
+    const q = m[1].toLowerCase();
+    const all = commands();
+    items = all.filter(c => c.cmd.toLowerCase().startsWith(q)).concat(all.filter(c => !c.cmd.toLowerCase().startsWith(q) && (c.cmd.toLowerCase().includes(q) || c.text.toLowerCase().includes(q)))).slice(0, 40);
+    if (!open) idx = 0;
+    idx = Math.min(idx, Math.max(0, items.length - 1));
+    open = true;
+    pop().classList.add('open');
+    document.body.classList.add('slash-open');
+    render();
+  }
+  function pick(i) {
+    const c = items[i];
+    if (!c) return;
+    close(); clearCmd();
+    c.run();
+  }
+  function key(e) {
+    if (!open) return false;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); idx = (idx + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % Math.max(1, items.length); render(); return true; }
+    if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') { if (!items.length) return false; e.preventDefault(); pick(idx); return true; }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); return true; }
+    return false;
+  }
+  function init() {
+    pop().addEventListener('mousedown', (e) => { const b = e.target.closest('[data-sl]'); if (b) { e.preventDefault(); pick(Number(b.dataset.sl)); } });
+    pop().addEventListener('mousemove', (e) => { const b = e.target.closest('[data-sl]'); if (b && Number(b.dataset.sl) !== idx) { idx = Number(b.dataset.sl); pop().querySelectorAll('.sl-item').forEach((x, i) => x.classList.toggle('on', i === idx)); } });
+  }
+  return { update, key, close, init, get open() { return open; } };
+})();
+
 // Режимы из меню «+»: остаются включёнными, пока их не выключить
 const FLAGS = {
   research: { icon: 'globe', get label() { return t('Исследование'); }, get hint() { return t('поиск в интернете с источниками'); } },
@@ -2277,6 +2391,7 @@ async function renderSettings() {
         <button data-theme="dark" class="${s.theme === 'dark' ? 'on' : ''}">${icon('moon')}${t('Тёмная')}</button></div></div>
       <div class="toggle-row" id="asciiToggle"><span class="switch ${s.asciiBg ? 'on' : ''}"></span>
         <span class="tr-text">${t('Живой ASCII-фон')}<small>${t('Анимированное поле символов на пустом экране; в переписке приглушается')}</small></span></div>
+      ${discordHtml(s)}
       ${lookHtml()}`;
   }
   if (stab === 'pets') {
@@ -2573,6 +2688,13 @@ function bindSettings(body) {
     await saveSettings({ lang: b.dataset.lang });
     applyLang();
   }));
+  $$('[data-dc]').forEach(b => b.addEventListener('click', async () => {
+    const d = { on: true, showModel: true, showProject: false, ...(state.settings.discord || {}) };
+    d[b.dataset.dc] = !d[b.dataset.dc];
+    await saveSettings({ discord: d }); renderSettings();
+    setTimeout(() => { if (stab === 'look') refreshDiscordState(); }, 1500);
+  }));
+  if (stab === 'look') refreshDiscordState();
   on('#asciiToggle', 'click', async () => { await saveSettings({ asciiBg: !state.settings.asciiBg }); render(); renderSettings(); });
   on('#petsToggle', 'click', async () => { const p = state.settings.pets; await saveSettings({ pets: { ...p, enabled: !p.enabled } }); applyPets(); renderSettings(); });
   all('[data-pet]', el => el.addEventListener('click', async () => {
@@ -2627,9 +2749,11 @@ function bindUI() {
     }
   }, true);
   const input = $('#input');
-  input.addEventListener('input', syncInput);
+  input.addEventListener('input', () => { syncInput(); Slash.update(); });
+  input.addEventListener('blur', () => setTimeout(() => Slash.close(), 120));
   input.addEventListener('scroll', () => { $('#hl').scrollTop = input.scrollTop; });
   input.addEventListener('keydown', (e) => {
+    if (Slash.key(e)) return;
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       const ctrl = e.ctrlKey || e.metaKey;
       if (look().send === 'ctrl') { if (ctrl) { e.preventDefault(); submit({}); } return; }
@@ -2637,13 +2761,14 @@ function bindUI() {
     }
   });
   input.addEventListener('paste', (e) => {
-    const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith('image/'));
+    const files = [...(e.clipboardData?.files || [])];
     if (files.length) { e.preventDefault(); addFiles(files); }
   });
   $('#sendBtn').addEventListener('click', () => {
     if (isRunning(currentChat()?.id) && !input.value.trim() && !state.attachments.length) stop(); else submit();
   });
   $('#plusBtn').addEventListener('click', plusMenu);
+  Slash.init();
   $('#envBtn').addEventListener('click', envMenu);
   $('#modeBtn').addEventListener('click', modeMenu);
   $('#agentBtn').addEventListener('click', agentMenu);

@@ -11,6 +11,7 @@ const openrouter = require('./executors/openrouter');
 const catalog = require('./catalog');
 const tokens = require('./tokens');
 const cli = require('./executors/cli');
+const discord = require('./discord');
 const ws = require('./workspace');
 const tunnel = require('./tunnel');
 const netproxy = require('./netproxy');
@@ -113,6 +114,7 @@ function createWindow() {
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 
 app.whenReady().then(() => {
+  discord.configure(store.getSettings().discord || {}, app.getVersion());
   Menu.setApplicationMenu(null);
   const mediaRoot = path.resolve(store.dirs().media);
   protocol.handle('media', (req) => {
@@ -143,7 +145,7 @@ app.whenReady().then(() => {
   if (store.getGeminiKey() && !store.getSettings().modelsPicked2) autoPickModels(null, true).catch(() => {});
 });
 app.on('window-all-closed', () => { for (const c of tasks.values()) c.abort(); ws.killAll(); tunnel.stop(); app.quit(); });
-app.on('before-quit', () => tunnel.stop());
+app.on('before-quit', () => { tunnel.stop(); discord.shutdown(); });
 
 // ---------------- Рабочее место (файлы + терминал) ----------------
 const chatDir = (chatId, cwd) => cwd || path.join(store.getSettings().workspaceRoot, `chat-${String(chatId).slice(0, 8)}`);
@@ -174,7 +176,13 @@ ipcMain.handle('term:run', (_e, termId, cmd) => ws.termRun(termId, cmd));
 ipcMain.handle('term:kill', (_e, termId) => { ws.termKill(termId); return true; });
 
 // ---------------- IPC ----------------
-const send = (taskId, ev) => { if (win && !win.isDestroyed()) win.webContents.send('task:event', { taskId, ...ev }); };
+const send = (taskId, ev) => {
+  // Discord: что сейчас делается
+  if (ev.kind === 'executor') discord.taskUpdate(taskId, { executor: ev.executor, label: ev.label, name: cli.LABELS[ev.executor] || (ev.executor === 'gemini' ? 'Gemini' : ev.executor === 'openrouter' ? 'OpenRouter' : '') });
+  else if (ev.kind === 'route' && ['chat', 'code', 'image', 'video'].includes(ev.route)) discord.taskUpdate(taskId, { route: ev.route });
+  else if (ev.kind === 'done' || ev.kind === 'error') discord.taskEnd(taskId);
+  if (win && !win.isDestroyed()) win.webContents.send('task:event', { taskId, ...ev });
+};
 
 const fullSettings = () => ({ ...store.getSettings(), lang: i18n.lang(), hasKey: !!store.getGeminiKey(), hasOrKey: !!store.getOpenRouterKey(),
   catalog: catalog.get(), platform: process.platform, version: app.getVersion(),
@@ -186,6 +194,7 @@ ipcMain.handle('settings:set', (_e, patch) => {
   if (patch && 'theme' in patch) applyTheme(s.theme);
   if (patch && patch.cliPaths) cliCache = null;
   if (patch && (patch.tunnel || patch.net)) netproxy.configure(s.net, s.tunnel).catch(() => {});
+  if (patch && patch.discord) discord.configure(s.discord, app.getVersion());
   return fullSettings();
 });
 ipcMain.handle('key:set', async (_e, key) => {
@@ -348,17 +357,20 @@ ipcMain.handle('screen:capture', async () => {
     if (wasVisible) { win.show(); win.focus(); }
   }
 });
+ipcMain.handle('discord:view', (_e, v) => { discord.setView(v || {}); return true; });
+ipcMain.handle('discord:status', () => discord.status());
 ipcMain.handle('task:cancel', (_e, taskId) => { tasks.get(taskId)?.abort(); return true; });
 ipcMain.handle('task:run', (_e, input) => {
   const taskId = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const ctrl = new AbortController();
   tasks.set(taskId, ctrl);
+  discord.taskStart(taskId, { route: input.arena && input.mode === 'code' ? 'arena' : input.team && input.mode === 'code' ? 'team' : (['image', 'video', 'chat'].includes(input.mode) ? input.mode : 'code'), project: input.cwd || null });
   runTask(taskId, input, ctrl.signal)
     .catch(e => {
       const code = e.code || (e.name === 'AbortError' ? 'aborted' : null);
       send(taskId, { kind: 'error', error: code === 'aborted' ? t('Остановлено') : (e.message || String(e)), code });
     })
-    .finally(() => tasks.delete(taskId));
+    .finally(() => { tasks.delete(taskId); discord.taskEnd(taskId); });
   return taskId;
 });
 

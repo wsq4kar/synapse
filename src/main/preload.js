@@ -59,4 +59,5 @@ contextBridge.exposeInMainWorld('synapse', {
   stats: invoke('stats:get'),
   changelog: invoke('changelog:get'),
   captureScreen: invoke('screen:capture'),
+  discord: { view: invoke('discord:view'), status: invoke('discord:status') },
 });

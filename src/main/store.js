@@ -8,6 +8,7 @@ const DEFAULT_SETTINGS = {
   smartRouting: true,              // спрашивать Gemini, если по словам непонятно
   codeExecutors: ['claude', 'codex', 'antigravity', 'opencode'], // порядок фолбэка
   agentAccess: 'edits',            // edits — только правки файлов; full — полный доступ
+  discord: { on: true, showModel: true, showProject: false }, // статус в Discord
   models: {
     chat: 'gemini-2.5-flash',
     chatUltra: 'gemini-2.5-pro',
