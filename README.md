@@ -49,14 +49,23 @@ Turn on **Arena** in the Code tab and the large models work as a team. A small m
 ### Extensions
 One page for **MCP servers, connectors, skills and plugins** across all four agents. Turn a server on for Claude Code, Codex, Antigravity or OpenCode with one click, connect GitHub, Notion, Linear, Figma, Jira, Sentry, Stripe or Supabase in a couple of clicks, write skills in a built-in editor, and install Claude Code plugins from marketplaces or MCP servers from the official MCP registry. Everything is written into each agent's own config, so it works in the terminal too.
 
-### Subagents and Team mode
-One request can spawn parallel subagents, each with its own live card, steps and result.
+### Team
+Press **Team** in the Code tab and several AIs build one project together. The lead (the strongest model) writes a plan and contracts and splits the work into tasks with separate files; Claude, GPT and Gemini write their parts in parallel in a shared copy of your folder and leave notes for each other in `TEAM.md`; the lead assembles everything, another model reviews it, and you apply the result with one button. Subagents are automatic: each agent decides on its own when a task needs them.
+
+### Undo anything
+Every agent run gets a restore point. Under the answer you see the changed files with diffs and an **Undo** button, and `/history` lists earlier points. Files you edited after the agent are never overwritten without asking.
 
 ### Visible reasoning
 You see the model think in real time and can expand the summary afterwards. Text streams in smoothly with per-word reveal animations.
 
 </td>
 <td width="50%" valign="top">
+
+### The + menu, slash commands and voice
+Attach any files or a screenshot, turn MCP servers and plugins on and off, apply a skill, switch on **Research** (web search with sources) or **Plan mode** (the agent only reads and plans). Type `/` for commands, or press the mic (`Ctrl+M`) and just talk.
+
+### Discord status
+“Playing Synapse” in your Discord profile: chat, code, Arena or Team, the agent and the time. The task text is never shown.
 
 ### Workspace
 A file tree, an instant preview (HTML, code, Markdown, PDF, images, video) and a built-in **PowerShell terminal**, all next to the chat. Hide the file list or expand the preview when you need the room.
@@ -78,7 +87,11 @@ Light and dark themes, five font styles, text size, accent colors, conversation 
 
 <p align="center"><img src="docs/screenshots/arena.png" alt="Arena" width="100%"><br><sub><b>Arena:</b> large models plan, debate, build and vote. The best variant wins.</sub></p>
 
+<p align="center"><img src="docs/screenshots/team.png" alt="Team" width="100%"><br><sub><b>Team:</b> the lead splits the task, members build their parts in parallel, another model reviews</sub></p>
+
 <p align="center"><img src="docs/screenshots/extensions.png" alt="Extensions" width="100%"><br><sub><b>Extensions:</b> MCP servers, connectors, skills, plugins and marketplaces for every agent</sub></p>
+
+<p align="center"><img src="docs/screenshots/plus-menu.png" alt="Plus menu" width="100%"><br><sub><b>The + menu:</b> files, screenshot, file history, skills, connectors, plugins, Research and Plan mode</sub></p>
 
 <table>
 <tr>
@@ -103,7 +116,7 @@ Light and dark themes, five font styles, text size, accent colors, conversation 
 |---|---|---|
 | 1 | **Settings → API keys** | Paste a key from [Google AI Studio](https://aistudio.google.com/apikey) and/or [OpenRouter](https://openrouter.ai/keys). Models are picked automatically. |
 | 2 | **Settings → Agents** | Install at least one CLI agent (see below), sign in, then press **Check again**. |
-| 3 | Main screen | Type a task. Use `Ctrl+2` for a code session in a folder, `Ctrl+U` for Ultra and `Ctrl+E` for effort. |
+| 3 | Main screen | Type a task. Use `Ctrl+2` for a code session in a folder, `Ctrl+U` for Ultra, `Ctrl+E` for effort, `Ctrl+M` for voice, `Ctrl+O` to attach files and `/` for commands. |
 
 ### Coding agents
 
@@ -182,10 +195,11 @@ Your folder is untouched until you press **Apply**, and Synapse warns you if fil
 
 ## Roadmap
 
-- [ ] Voice input
-- [ ] `/` slash commands in the composer
-- [ ] Side-by-side answers from two agents
-- [ ] File history with one-click rollback
+- [x] Voice input
+- [x] `/` slash commands in the composer
+- [x] Several agents on one task — Arena (they compete) and Team (they collaborate)
+- [x] File history with one-click rollback
+- [x] Discord Rich Presence
 - [ ] macOS build
 
 Ideas and bug reports are welcome in [Issues](https://github.com/wsq4kar/synapse/issues).

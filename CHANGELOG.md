@@ -1,8 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
-- Installer: waits until Synapse has fully closed (up to 15 s) before copying files, instead of failing with «cannot open file for writing» when updating over a running app.
+- **Team** (the Team button in the Code tab): several AIs build one project together. The lead (the strongest model) studies the project, writes a plan and contracts and splits the work into tasks with separate files; members (one model per agent, plus an optional free OpenCode model for routine work) write their parts in parallel in a shared copy of the folder and leave notes in `TEAM.md`; the lead assembles the parts and fixes the seams, another model reviews, the lead fixes what it found. A live board shows members, tasks (queued, in progress, done) and messages. Your folder is untouched until you press **Apply**. Team and Arena can't be on at the same time.
+- **Subagents are automatic**: every agent decides on its own whether a big task needs parallel subagents.
+- **Extensions page** (it was built for 0.3.0 but never shipped): MCP servers, connectors, skills, plugins and marketplaces for Claude Code, Codex, Antigravity and OpenCode. Antigravity uses `~/.gemini/config/mcp_config.json`, `~/.gemini/skills` and `~/.gemini/config/plugins`.
+- **New + menu**: attach any files (code, text and PDF go to the chat; agents get them in the project folder), take a screenshot, add a folder, file history, and submenus for skills, connectors (turn MCP servers on and off) and plugins. Modes: **Research** (web search with sources: Google Search in Gemini, `:online` in OpenRouter, web search for agents) and **Plan mode** (the agent only reads the project and writes a plan). `Ctrl+O` attaches files.
+- **Slash commands**: type `/` for `/model`, `/effort`, `/ultra`, `/arena`, `/team`, `/plan`, `/research`, `/history`, `/attach`, `/screenshot`, `/voice`, `/folder`, `/new`, `/extensions`, `/stats`, `/settings` and your skills.
+- **File history with one-click undo**: before every agent run Synapse remembers the folder; under the answer you see the changed files with diffs and an **Undo** button (and **Redo**). Applying an Arena or Team result can be undone too. Files you changed after the agent are never overwritten without asking.
+- **Voice input**: the mic button or `Ctrl+M`; speech is transcribed by Gemini with your key, or by a Gemini model through OpenRouter.
+- **Discord Rich Presence**: “Playing Synapse” with what you're doing (chat, code, Arena, Team, image, video), the agent and the time. Model and project folder can be hidden in Settings → Appearance; task text is never shown.
+- Fixed: with Arena on, the input box shifted to the left.
+- Installer waits until Synapse has fully closed (up to 15 s) before copying files, instead of failing with «cannot open file for writing».
 
 ## 0.4.1
 

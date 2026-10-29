@@ -2534,9 +2534,9 @@ let stab = 'api';
 // Слова для поиска по настройкам (RU + EN)
 const SETTINGS_WORDS = {
   api: 'gemini openrouter ключ key api модель model чат chat изображения image видео video veo nano banana маршрутизатор router',
-  agents: 'агент agent claude codex antigravity opencode модели models путь path арена arena порядок order вход login папка folder',
+  agents: 'агент agent claude codex antigravity opencode модели models путь path арена arena порядок order вход login папка folder команда team ведущий lead ревью review',
   memory: 'память memory обо мне about claude.md скиллы skills коннекторы connectors mcp плагины plugins',
-  look: 'тема theme тёмная dark светлая light шрифт font размер size цвет color accent акцент анимации motion язык language ascii пузыри',
+  look: 'discord дискорд статус status rich presence тема theme тёмная dark светлая light шрифт font размер size цвет color accent акцент анимации motion язык language ascii пузыри',
   pets: 'питомцы pets',
   net: 'сеть network прокси proxy ssh vpn firewall брандмауэр туннель tunnel',
   log: 'журнал log история history задачи tasks',
