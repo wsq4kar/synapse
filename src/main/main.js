@@ -655,7 +655,7 @@ ipcMain.handle('ext:plugins', async () => {
   const has = (id) => agents.some(a => a.id === id && a.installed);
   return {
     claude: has('claude') ? await ext.claudePlugins(ctx) : { ok: false, error: t('Claude Code не установлен') },
-    codex: ext.codexPlugins(), gemini: ext.geminiExtensions(), markets: ext.MARKETS, agents,
+    codex: ext.codexPlugins(), antigravity: ext.agyPlugins(), markets: ext.MARKETS, agents,
   };
 });
 ipcMain.handle('ext:plugin', async (_e, { action, id, accept }) => {

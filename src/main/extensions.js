@@ -1,6 +1,6 @@
 // Расширения агентов: MCP-серверы, коннекторы, скиллы, плагины и маркетплейсы.
 // Synapse ничего не хранит «у себя»: читает и пишет родные конфиги каждого CLI,
-// поэтому всё, что добавлено здесь, работает и в самих Claude Code / Codex / Gemini CLI / OpenCode.
+// поэтому всё, что добавлено здесь, работает и в самих Claude Code / Codex / Antigravity / OpenCode.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -13,15 +13,15 @@ const P = {
   claudeJson: () => path.join(home(), '.claude.json'),
   claudeSkills: () => path.join(home(), '.claude', 'skills'),
   agentsSkills: () => path.join(home(), '.agents', 'skills'),
-  geminiSkills: () => path.join(home(), '.gemini', 'skills'),
+  agySkills: () => path.join(home(), '.gemini', 'skills'),
   opencodeSkills: () => path.join(home(), '.config', 'opencode', 'skills'),
   codexToml: () => path.join(process.env.CODEX_HOME || path.join(home(), '.codex'), 'config.toml'),
   codexPlugins: () => path.join(process.env.CODEX_HOME || path.join(home(), '.codex'), 'plugins', 'cache'),
-  geminiSettings: () => path.join(home(), '.gemini', 'settings.json'),
-  geminiExt: () => path.join(home(), '.gemini', 'extensions'),
+  agyMcp: () => path.join(home(), '.gemini', 'config', 'mcp_config.json'),
+  agyPlugins: () => path.join(home(), '.gemini', 'config', 'plugins'),
   opencodeJson: () => path.join(home(), '.config', 'opencode', 'opencode.json'),
 };
-const AGENTS = ['claude', 'codex', 'gemini-cli', 'opencode'];
+const AGENTS = ['claude', 'codex', 'antigravity', 'opencode'];
 const NAME_RE = /^[A-Za-z0-9][\w.-]{0,63}$/;
 
 // ---------- файлы ----------
@@ -193,10 +193,12 @@ function fromCodex(s) {
   if (s.url) return { type: 'http', url: s.url, headers: s.http_headers || {}, bearerEnv: s.bearer_token_env_var || null, enabled: s.enabled !== false };
   return { type: 'stdio', command: s.command, args: s.args || [], env: s.env || {}, enabled: s.enabled !== false };
 }
-function fromGemini(s) {
+// Antigravity: ~/.gemini/config/mcp_config.json — общий для agy и IDE; удалённые серверы через serverUrl
+function fromAgy(s) {
   if (!s || typeof s !== 'object') return null;
-  if (s.httpUrl || s.url) return { type: 'http', url: s.httpUrl || s.url, headers: s.headers || {}, sse: !s.httpUrl };
-  return { type: 'stdio', command: s.command, args: s.args || [], env: s.env || {} };
+  const url = s.serverUrl || s.httpUrl || s.url;
+  if (url) return { type: 'http', url, headers: s.headers || {}, enabled: s.disabled !== true };
+  return { type: 'stdio', command: s.command, args: s.args || [], env: s.env || {}, enabled: s.disabled !== true };
 }
 function fromOpencode(s) {
   if (!s || typeof s !== 'object') return null;
@@ -206,14 +208,14 @@ function fromOpencode(s) {
 }
 
 function readMcp() {
-  const out = { claude: {}, codex: {}, 'gemini-cli': {}, opencode: {} };
+  const out = { claude: {}, codex: {}, 'antigravity': {}, opencode: {} };
   const errors = {};
   try { const j = readJson(P.claudeJson(), {}); for (const [n, s] of Object.entries(j.mcpServers || {})) out.claude[n] = fromClaude(s); } catch (e) { errors.claude = e.message; }
   try {
     const f = P.codexToml();
     if (fs.existsSync(f)) { const j = parseToml(fs.readFileSync(f, 'utf8')); for (const [n, s] of Object.entries(j.mcp_servers || {})) out.codex[n] = fromCodex(s); }
   } catch (e) { errors.codex = e.message; }
-  try { const j = readJson(P.geminiSettings(), {}); for (const [n, s] of Object.entries(j.mcpServers || {})) out['gemini-cli'][n] = fromGemini(s); } catch (e) { errors['gemini-cli'] = e.message; }
+  try { const j = readJson(P.agyMcp(), {}); for (const [n, s] of Object.entries(j.mcpServers || {})) out['antigravity'][n] = fromAgy(s); } catch (e) { errors['antigravity'] = e.message; }
   try {
     const f = P.opencodeJson();
     if (fs.existsSync(f)) {
@@ -279,12 +281,12 @@ async function addMcp(agent, name, spec, ctx) {
     writeAtomic(f, `${text.replace(/\s*$/, '')}${text.trim() ? '\n\n' : ''}${lines.join('\n')}\n`);
     return;
   }
-  if (agent === 'gemini-cli') {
-    const f = P.geminiSettings();
+  if (agent === 'antigravity') {
+    const f = P.agyMcp();
     const j = readJson(f, {});
     j.mcpServers = j.mcpServers || {};
     j.mcpServers[name] = spec.type === 'http'
-      ? { [spec.sse ? 'url' : 'httpUrl']: spec.url, ...(Object.keys(headers).length ? { headers } : {}) }
+      ? { serverUrl: spec.url, ...(Object.keys(headers).length ? { headers } : {}) }
       : { command: spec.command, args: spec.args || [], ...(Object.keys(env).length ? { env } : {}) };
     writeJson(f, j);
     return;
@@ -321,8 +323,8 @@ async function removeMcp(agent, name, ctx) {
     if (fs.existsSync(f)) writeAtomic(f, tomlRemoveTable(fs.readFileSync(f, 'utf8'), ['mcp_servers', name]));
     return;
   }
-  if (agent === 'gemini-cli') {
-    const f = P.geminiSettings();
+  if (agent === 'antigravity') {
+    const f = P.agyMcp();
     const j = readJson(f, null);
     if (j?.mcpServers?.[name]) { delete j.mcpServers[name]; writeJson(f, j); }
     return;
@@ -340,7 +342,7 @@ async function removeMcp(agent, name, ctx) {
 // Вход в удалённый сервер (OAuth) — в отдельном окне терминала
 function loginMcp(agent, name, ctx) {
   const map = { claude: ['mcp', 'login', name], codex: ['mcp', 'login', name], opencode: ['mcp', 'auth', name] };
-  if (!map[agent]) throw new Error(t('Gemini CLI входит в сервер сам при первом использовании (команда /mcp auth в сессии).'));
+  if (!map[agent]) throw new Error(t('Antigravity входит в сервер сам при первом использовании.'));
   openTerminal(ctx.bin(agent), map[agent], ctx.env);
 }
 
@@ -448,8 +450,8 @@ function specFromRegistry(item, choice = {}) {
 // Где агенты ищут личные скиллы. Один и тот же формат SKILL.md у всех.
 const SKILL_ROOTS = () => [
   { id: 'claude', dir: P.claudeSkills(), label: '~/.claude/skills', seenBy: ['claude', 'opencode'] },
-  { id: 'agents', dir: P.agentsSkills(), label: '~/.agents/skills', seenBy: ['codex', 'gemini-cli', 'opencode'] },
-  { id: 'gemini', dir: P.geminiSkills(), label: '~/.gemini/skills', seenBy: ['gemini-cli'] },
+  { id: 'agents', dir: P.agentsSkills(), label: '~/.agents/skills', seenBy: ['codex', 'opencode'] },
+  { id: 'gemini', dir: P.agySkills(), label: '~/.gemini/skills', seenBy: ['antigravity'] },
   { id: 'opencode', dir: P.opencodeSkills(), label: '~/.config/opencode/skills', seenBy: ['opencode'] },
 ];
 const SKILL_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -480,7 +482,7 @@ function listSkills(projectDir) {
   const roots = SKILL_ROOTS();
   if (projectDir) {
     roots.push({ id: 'project-claude', dir: path.join(projectDir, '.claude', 'skills'), label: '.claude/skills', seenBy: ['claude', 'opencode'], project: true });
-    roots.push({ id: 'project-agents', dir: path.join(projectDir, '.agents', 'skills'), label: '.agents/skills', seenBy: ['codex', 'gemini-cli', 'opencode'], project: true });
+    roots.push({ id: 'project-agents', dir: path.join(projectDir, '.agents', 'skills'), label: '.agents/skills', seenBy: ['codex', 'opencode'], project: true });
   }
   const out = [];
   for (const r of roots) {
@@ -648,17 +650,18 @@ function codexPluginToggle(id, enabled) {
   const text = fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '';
   writeAtomic(f, tomlSetKey(text, ['plugins', id], 'enabled', enabled ? 'true' : 'false'));
 }
-// Gemini CLI: расширения — папки с gemini-extension.json
-function geminiExtensions() {
-  const root = P.geminiExt();
+// Antigravity: плагины (бывшие расширения) — папки в ~/.gemini/config/plugins
+function agyPlugins() {
+  const root = P.agyPlugins();
   const out = [];
   let dirs = [];
-  try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name); } catch { return out; }
+  try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter(e => e.isDirectory() || e.isSymbolicLink()).map(e => e.name); } catch { return out; }
   for (const d of dirs) {
-    try {
-      const j = JSON.parse(fs.readFileSync(path.join(root, d, 'gemini-extension.json'), 'utf8'));
-      out.push({ id: j.name || d, name: j.name || d, version: j.version || '', description: j.description || '', mcp: Object.keys(j.mcpServers || {}), dir: path.join(root, d) });
-    } catch { /* не расширение */ }
+    let j = {};
+    for (const n of ['plugin.json', 'gemini-extension.json', 'package.json']) {
+      try { j = JSON.parse(fs.readFileSync(path.join(root, d, n), 'utf8')); break; } catch { /* дальше */ }
+    }
+    out.push({ id: j.name || d, name: j.name || d, version: j.version || '', description: j.description || '', mcp: Object.keys(j.mcpServers || {}), dir: path.join(root, d) });
   }
   return out;
 }
@@ -668,6 +671,6 @@ module.exports = {
   listMcp, addMcp, removeMcp, loginMcp, testMcp,
   searchRegistry, specFromRegistry,
   listSkills, readSkill, saveSkill, removeSkill, copySkill, importSkill, SKILL_ROOTS,
-  claudePlugins, claudePluginAction, claudeMarketplace, codexPlugins, codexPluginToggle, geminiExtensions,
+  claudePlugins, claudePluginAction, claudeMarketplace, codexPlugins, codexPluginToggle, agyPlugins,
   parseToml, tomlRemoveTable, tomlSetKey, parseSkill, buildSkill, runCli,
 };

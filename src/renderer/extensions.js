@@ -2,7 +2,7 @@
 // Всё пишется в родные конфиги агентов, поэтому работает и в самих CLI.
 (() => {
   let H; // помощники из app.js
-  const AG = ['claude', 'codex', 'gemini-cli', 'opencode'];
+  const AG = ['claude', 'codex', 'antigravity', 'opencode'];
   const S = {
     tab: 'mcp', mk: 'plugins', mcp: null, conns: null, skills: null, plugins: null, pluginsLoading: false,
     form: null, edit: null, pending: new Set(), sure: null, tests: {}, logins: {},
@@ -60,7 +60,7 @@
     el.innerHTML = `<div class="page-inner ext-page">
       <div class="page-head"><h1>${t('Расширения')}</h1><span class="grow"></span>
         <button class="btn" data-x="reload">${icon('refresh')}${t('Обновить')}</button></div>
-      <p class="ext-lead">${t('MCP-серверы, коннекторы, скиллы и плагины для Claude Code, Codex, Gemini CLI и OpenCode. Synapse пишет их в настройки самих агентов, поэтому они работают и в терминале.')}</p>
+      <p class="ext-lead">${t('MCP-серверы, коннекторы, скиллы и плагины для Claude Code, Codex, Antigravity и OpenCode. Synapse пишет их в настройки самих агентов, поэтому они работают и в терминале.')}</p>
       <div class="seg ext-tabs">${TABS.map(([id, l, ic]) => `<button data-tab="${id}" class="${S.tab === id ? 'on' : ''}">${icon(ic)}${t(l)}</button>`).join('')}</div>
       <div class="ext-body"></div></div>`;
     root = el.querySelector('.ext-page');
@@ -108,7 +108,7 @@
     const key = `t:${r.name}`;
     const test = S.tests[r.name];
     const sure = S.sure === `rm:${r.name}`;
-    const httpOn = r.spec.type === 'http' ? Object.keys(r.agents).filter(a => r.agents[a] && a !== 'gemini-cli') : [];
+    const httpOn = r.spec.type === 'http' ? Object.keys(r.agents).filter(a => r.agents[a] && a !== 'antigravity') : [];
     return `<div class="ext-row" style="--i:${Math.min(i, 16)}">
       <div class="er-head">
         <div class="er-main"><b>${esc(r.name)}</b><span class="chip">${r.spec.type === 'http' ? 'URL' : t('команда')}</span>
@@ -192,7 +192,7 @@
   }
   function connFormHtml(c, f, st) {
     const added = st.on || [];
-    const loginable = c.auth === 'oauth' ? added.filter(a => a !== 'gemini-cli') : [];
+    const loginable = c.auth === 'oauth' ? added.filter(a => a !== 'antigravity') : [];
     return `<div class="ec-form" data-form="conn">
       ${c.auth === 'token' ? `<div class="field"><label>${t('Токен')}</label><input class="input mono" type="password" data-f="token" value="${esc(f.token || '')}" placeholder="ghp_…" spellcheck="false"><div class="hint">${esc(c.tokenHint || '')}</div></div>` : ''}
       ${c.needsPath ? `<div class="field"><label>${t('Папка')}</label><div class="row"><input class="input mono" data-f="path" value="${esc(f.path || '')}" spellcheck="false"><button class="btn" data-x="conn-pick">${icon('folder')}${t('Выбрать')}</button></div></div>` : ''}
@@ -278,10 +278,10 @@
           ${p.description ? `<div class="er-desc">${esc(p.description)}</div>` : ''}</div>`).join('')}</div>`
           : `<div class="note">${t('Плагины Codex устанавливаются в самом Codex командой /plugins. Здесь их можно включать и выключать.')}</div>`}
       </div>
-      <div class="ext-sec"><h3>${H.provIcon('gemini-cli')}Gemini CLI</h3>
-        ${S.plugins.gemini.length ? `<div class="ext-list">${S.plugins.gemini.map(p => `<div class="ext-row"><div class="er-head"><div class="er-main"><b>${esc(p.name)}</b><span class="dim">${esc(p.version)}</span>${p.mcp.length ? `<span class="chip">MCP: ${esc(p.mcp.join(', '))}</span>` : ''}</div>
+      <div class="ext-sec"><h3>${H.provIcon('antigravity')}Antigravity</h3>
+        ${S.plugins.antigravity.length ? `<div class="ext-list">${S.plugins.antigravity.map(p => `<div class="ext-row"><div class="er-head"><div class="er-main"><b>${esc(p.name)}</b><span class="dim">${esc(p.version)}</span>${p.mcp.length ? `<span class="chip">MCP: ${esc(p.mcp.join(', '))}</span>` : ''}</div>
           <div class="er-actions"><button class="btn sm ghost" data-x="open" data-path="${esc(p.dir)}">${icon('folderOpen')}</button></div></div>${p.description ? `<div class="er-desc">${esc(p.description)}</div>` : ''}</div>`).join('')}</div>`
-          : `<div class="note">${t('Расширения Gemini CLI ставятся командой gemini extensions install <ссылка>.')}</div>`}
+          : `<div class="note">${t('Плагины Antigravity лежат в ~/.gemini/config/plugins. Пока здесь их можно только посмотреть.')}</div>`}
       </div>`;
   }
 
@@ -431,7 +431,7 @@
           const r = S.mcp.list.find(x => x.name === b.dataset.name);
           const ags = Object.keys(r.agents).filter(a => r.agents[a] === true);
           return H.menu(b, [{ label: t('Войти в {n}', { n: r.name }) }, ...ags.map(a => ({
-            iconHtml: H.provIcon(a), text: agentName(a), check: false, disabled: a === 'gemini-cli', hint: a === 'gemini-cli' ? t('в сессии: /mcp auth') : '',
+            iconHtml: H.provIcon(a), text: agentName(a), check: false, disabled: a === 'antigravity', hint: a === 'antigravity' ? t('входит сам при первом запуске') : '',
             act: () => H.api.ext.mcpLogin({ name: r.name, agent: a }).then(() => H.toast(t('Откроется терминал — завершите вход в браузере'))).catch(err => H.toast(H.cleanErr(err), true)),
           }))], { align: 'right' });
         }

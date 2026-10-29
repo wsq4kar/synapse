@@ -45,7 +45,7 @@ const EN = {
   'CLI не найден: {b}': 'CLI not found: {b}',
   'Claude Code недоступен': 'Claude Code is unavailable',
   'Claude Code: {m}': 'Claude Code: {m}',
-  'Gemini CLI входит в сервер сам при первом использовании (команда /mcp auth в сессии).': 'Gemini CLI signs in on first use (/mcp auth in a session).',
+  'Antigravity входит в сервер сам при первом использовании.': 'Antigravity signs in to the server on first use.',
   'В {f} есть комментарии — добавьте сервер вручную, чтобы их не потерять': '{f} has comments — add the server by hand so they aren’t lost',
   'В {f} есть комментарии — удалите сервер вручную, чтобы их не потерять': '{f} has comments — remove the server by hand so they aren’t lost',
   'В папке нет SKILL.md': 'The folder has no SKILL.md',
