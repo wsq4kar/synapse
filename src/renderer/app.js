@@ -1815,6 +1815,109 @@ function closePopovers() {
   if (popClose) { const f = popClose; popClose = null; f(); }
 }
 
+/* ================= Голосовой ввод ================= */
+// Запись с микрофона → WAV 16 кГц моно → распознавание в Gemini (или OpenRouter) → текст в поле ввода
+const Voice = (() => {
+  let rec = null, stream = null, chunks = [], ctx = null, raf = 0, started = 0, timer = 0, busy = false, cancelled = false;
+  const btn = () => $('#micBtn');
+  const MAX_MS = 120000;
+  function setUi(mode) {
+    const b = btn(), c = $('#composer');
+    b.classList.toggle('rec', mode === 'rec');
+    b.classList.toggle('busy', mode === 'busy');
+    c.classList.toggle('listening', mode === 'rec');
+    b.title = mode === 'rec' ? t('Остановить запись (Ctrl+M), Esc — отменить') : mode === 'busy' ? t('Распознаю речь…') : t('Голосовой ввод (Ctrl+M)');
+    if (mode !== 'rec') { $('#micTime').textContent = ''; b.style.removeProperty('--lvl'); }
+    $('#input').placeholder = mode === 'rec' ? t('Говорите… нажмите ещё раз, чтобы закончить') : mode === 'busy' ? t('Распознаю речь…') : (currentChat()?.kind === 'code' ? t('Опишите задачу для агента') : t('Опишите задачу или задайте вопрос'));
+  }
+  async function start() {
+    if (busy || rec) return;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+    catch { return toast(t('Нет доступа к микрофону — проверьте настройки Windows: Конфиденциальность → Микрофон'), true); }
+    chunks = []; cancelled = false;
+    rec = new MediaRecorder(stream, MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? { mimeType: 'audio/webm;codecs=opus' } : undefined);
+    rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    rec.onstop = finish;
+    rec.start(250);
+    started = Date.now();
+    // уровень громкости — кнопка «дышит» в такт голосу
+    ctx = new AudioContext();
+    const an = ctx.createAnalyser(); an.fftSize = 512;
+    ctx.createMediaStreamSource(stream).connect(an);
+    const buf = new Uint8Array(an.fftSize);
+    const tick = () => {
+      an.getByteTimeDomainData(buf);
+      let peak = 0; for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+      btn().style.setProperty('--lvl', Math.min(1, peak / 64).toFixed(2));
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    timer = setInterval(() => {
+      const s = Math.floor((Date.now() - started) / 1000);
+      $('#micTime').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+      if (Date.now() - started > MAX_MS) stop();
+    }, 250);
+    setUi('rec');
+    pets.react?.('start');
+  }
+  function cleanup() {
+    cancelAnimationFrame(raf); clearInterval(timer);
+    stream?.getTracks().forEach(tr => tr.stop()); stream = null;
+    ctx?.close().catch(() => {}); ctx = null;
+  }
+  function stop(cancel = false) {
+    if (!rec) return;
+    cancelled = cancel;
+    try { rec.stop(); } catch { /* уже остановлен */ }
+  }
+  async function finish() {
+    const type = rec?.mimeType || 'audio/webm';
+    rec = null;
+    cleanup();
+    if (cancelled || !chunks.length || Date.now() - started < 400) { setUi(''); return; }
+    busy = true; setUi('busy');
+    try {
+      const wav = await toWav(new Blob(chunks, { type }));
+      const r = await api.transcribe({ data: wav });
+      const text = (r?.text || '').trim();
+      if (!text) toast(t('Речь не распознана — попробуйте ещё раз'), true);
+      else insertAtCursor(text);
+    } catch (e) { toast(cleanErr(e), true); }
+    finally { busy = false; setUi(''); }
+  }
+  function insertAtCursor(text) {
+    const el = $('#input');
+    const a = el.selectionStart ?? el.value.length, b = el.selectionEnd ?? el.value.length;
+    const before = el.value.slice(0, a), after = el.value.slice(b);
+    const sep = before && !/\s$/.test(before) ? ' ' : '';
+    el.value = before + sep + text + after;
+    const pos = (before + sep + text).length;
+    syncInput(); updateSendBtn(); el.focus(); el.setSelectionRange(pos, pos);
+  }
+  // webm/opus → PCM 16 кГц моно → WAV (base64)
+  async function toWav(blob) {
+    const arr = await blob.arrayBuffer();
+    const ac = new AudioContext();
+    const decoded = await ac.decodeAudioData(arr);
+    ac.close().catch(() => {});
+    const rate = 16000;
+    const off = new OfflineAudioContext(1, Math.ceil(decoded.duration * rate), rate);
+    const src = off.createBufferSource(); src.buffer = decoded; src.connect(off.destination); src.start();
+    const pcm = (await off.startRendering()).getChannelData(0);
+    const out = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+    const w = (o, s) => { for (let i = 0; i < s.length; i++) out.setUint8(o + i, s.charCodeAt(i)); };
+    w(0, 'RIFF'); out.setUint32(4, 36 + pcm.length * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+    out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true); out.setUint32(24, rate, true);
+    out.setUint32(28, rate * 2, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true); w(36, 'data'); out.setUint32(40, pcm.length * 2, true);
+    for (let i = 0; i < pcm.length; i++) { const v = Math.max(-1, Math.min(1, pcm[i])); out.setInt16(44 + i * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true); }
+    const bytes = new Uint8Array(out.buffer);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+  return { toggle: () => (rec ? stop() : start()), cancel: () => stop(true), get recording() { return !!rec; } };
+})();
+
 /* ================= Slash-команды ================= */
 // «/» в начале поля ввода: меню команд с поиском, стрелками, Enter/Tab и Esc
 const Slash = (() => {
@@ -1842,6 +1945,7 @@ const Slash = (() => {
       { cmd: 'research', icon: 'globe', text: t('Исследование'), hint: state.flags.research ? t('вкл') : '', run: () => setFlag('research', !state.flags.research) },
       { cmd: 'attach', icon: 'paperclip', text: t('Прикрепить файлы'), run: () => $('#fileInput').click() },
       { cmd: 'screenshot', icon: 'camera', text: t('Снимок экрана'), run: () => takeScreenshot() },
+      { cmd: 'voice', icon: 'mic', text: t('Голосовой ввод'), run: () => Voice.toggle() },
       { cmd: 'folder', icon: 'folderPlus', text: t('Выбрать папку…'), run: () => pickFolder() },
       { cmd: 'extensions', icon: 'puzzle', text: t('Расширения'), run: () => go({ type: 'extensions' }) },
       { cmd: 'stats', icon: 'chart', text: t('Статистика'), run: () => go({ type: 'stats' }) },
@@ -3016,6 +3120,7 @@ function bindUI() {
     if (isRunning(currentChat()?.id) && !input.value.trim() && !state.attachments.length) stop(); else submit();
   });
   $('#plusBtn').addEventListener('click', plusMenu);
+  $('#micBtn').addEventListener('click', () => Voice.toggle());
   Slash.init();
   $('#envBtn').addEventListener('click', envMenu);
   $('#modeBtn').addEventListener('click', modeMenu);
@@ -3138,6 +3243,7 @@ function bindUI() {
   document.addEventListener('keydown', (e) => {
     const mod = e.ctrlKey || e.metaKey, k = /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key.toLowerCase();
     if (e.key === 'Escape') {
+      if (Voice.recording) return Voice.cancel();
       if ($('.lightbox')) return $('.lightbox').remove();
       if ($('#menu').classList.contains('open')) return closePopovers();
       if ($('#settingsModal').classList.contains('open')) return closeSettings();
@@ -3148,6 +3254,7 @@ function bindUI() {
     if (mod && k === 'b') { e.preventDefault(); $('#collapseBtn').click(); }
     if (mod && k === 'u') { e.preventDefault(); toggleUltra(); }
     if (mod && k === 'o' && state.view.type === 'chat') { e.preventDefault(); $('#fileInput').click(); }
+    if (mod && k === 'm' && state.view.type === 'chat') { e.preventDefault(); Voice.toggle(); }
     if (mod && (k === 'j' || e.code === 'Backquote') && currentChat()?.kind === 'code' && state.view.type === 'chat') { e.preventDefault(); Workbench.toggle(true); }
     if (mod && k === 'e') { e.preventDefault(); cycleEffort(); }
     if (mod && e.key === '.') { e.preventDefault(); toggleProgress(); }

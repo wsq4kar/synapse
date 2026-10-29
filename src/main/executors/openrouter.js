@@ -215,4 +215,19 @@ function toUsage(u, model) {
   };
 }
 
-module.exports = { chatStream, classify, image, listModels, keyInfo, toUsage, OpenRouterError, MODEL_RE };
+// Голосовой ввод через OpenRouter: модель с аудиовходом получает WAV
+async function transcribe({ key, model, data, signal }) {
+  const res = await call(key, '/chat/completions', {
+    model: checkModel(model),
+    messages: [{ role: 'user', content: [
+      { type: 'text', text: 'Transcribe this audio verbatim in the language it is spoken. Output only the transcribed text, with punctuation, without quotes or comments. If there is no speech, output nothing.' },
+      { type: 'input_audio', input_audio: { data, format: 'wav' } },
+    ] }],
+    temperature: 0,
+    max_tokens: 2048,
+  }, signal);
+  const j = await res.json();
+  return String(j.choices?.[0]?.message?.content || '').trim();
+}
+
+module.exports = { chatStream, classify, image, listModels, keyInfo, toUsage, transcribe, OpenRouterError, MODEL_RE };

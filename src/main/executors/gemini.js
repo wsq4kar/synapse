@@ -257,4 +257,20 @@ function sleep(ms, signal) {
   });
 }
 
-module.exports = { chatStream, classify, image, video, listModels, GeminiError };
+// Голосовой ввод: распознать речь (WAV) в текст
+const TRANSCRIBE = 'Transcribe this audio verbatim in the language it is spoken. Output only the transcribed text, with punctuation, without quotes or comments. If there is no speech, output nothing.';
+async function transcribe({ key, model, data, mime = 'audio/wav', signal }) {
+  const url = `${BASE}/models/${checkModel(model)}:generateContent`;
+  const body = {
+    contents: [{ role: 'user', parts: [{ inlineData: { mimeType: mime, data } }, { text: TRANSCRIBE }] }],
+    generationConfig: { temperature: 0, maxOutputTokens: 2048 },
+  };
+  const thinking = /gemini-2\.5/.test(model) ? { thinkingBudget: 0 } : /gemini-[3-9]/.test(model) ? { thinkingLevel: 'minimal' } : null;
+  let res;
+  try { res = await call(key, url, thinking ? { ...body, generationConfig: { ...body.generationConfig, thinkingConfig: thinking } } : body, signal); }
+  catch (e) { if (!thinking || e.status !== 400) throw e; res = await call(key, url, body, signal); }
+  const j = await res.json();
+  return (j.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('').trim();
+}
+
+module.exports = { chatStream, classify, image, video, listModels, transcribe, GeminiError };

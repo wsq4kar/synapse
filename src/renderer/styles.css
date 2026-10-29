@@ -1341,3 +1341,20 @@ details[open] > :not(summary) { animation: arIn .35s var(--spring) both; }
 .hist .fallback { margin: 0 8px 8px; }
 .hist-load { display: flex; justify-content: center; padding: 10px; color: var(--muted); }
 .btn.sm.danger { animation: pop .35s var(--spring-bouncy) both; }
+
+/* голосовой ввод */
+#micBtn.mic-btn { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 4px; width: auto; overflow: visible; min-width: 32px; padding: 0 8px; margin-right: 4px; transition: color .2s, background .2s, transform .3s var(--spring); }
+.mic-btn .mic-ic { display: inline-flex; position: relative; z-index: 1; }
+.mic-btn .mic-time { position: relative; z-index: 1; font: 600 11.5px var(--font); font-variant-numeric: tabular-nums; }
+.mic-btn .mic-time:empty { display: none; }
+.mic-btn::before { content: ""; position: absolute; inset: 2px; border-radius: 10px; background: var(--danger); opacity: 0; transform: scale(calc(.85 + var(--lvl, 0) * .35)); transition: opacity .2s, transform .08s linear; }
+.mic-btn.rec { color: #fff; }
+.mic-btn.rec::before { opacity: 1; box-shadow: 0 0 0 calc(var(--lvl, 0) * 7px) color-mix(in srgb, var(--danger) 25%, transparent); }
+.mic-btn.rec .mic-ic { animation: micPulse 1.2s ease-in-out infinite; }
+@keyframes micPulse { 50% { transform: scale(1.12); } }
+.mic-btn.busy .mic-ic { animation: none; opacity: .4; }
+.mic-btn.busy::after { content: ""; position: absolute; width: 14px; height: 14px; left: 50%; top: 50%; margin: -7px 0 0 -7px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: extSpin .7s linear infinite; }
+.mic-btn:active { transform: scale(.92); }
+.composer.listening:not(.ultra) { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 10%, transparent), var(--shadow); }
+@media (prefers-reduced-motion: reduce) { .mic-btn.rec .mic-ic { animation: none; } .mic-btn::before { transition: opacity .2s; transform: none; } }
+.rm .mic-btn.rec .mic-ic { animation: none; }

@@ -365,6 +365,22 @@ ipcMain.handle('discord:status', () => discord.status());
 ipcMain.handle('history:list', (_e, { cwd } = {}) => history.list(cwd || null));
 ipcMain.handle('history:diff', (_e, { id }) => history.diff(id));
 ipcMain.handle('history:restore', (_e, { id, to, force }) => history.restore(id, to, !!force));
+// Голосовой ввод: Gemini по ключу, без ключа — модель с аудиовходом через OpenRouter
+ipcMain.handle('voice:transcribe', async (_e, { data } = {}) => {
+  if (typeof data !== 'string' || !data || data.length > 40 * 1024 * 1024) throw new Error(t('Нет записи'));
+  const settings = store.getSettings();
+  const key = store.getGeminiKey();
+  if (key) {
+    const model = settings.models.router || settings.models.chat;
+    return { text: await withModelFallback(settings.models.router ? 'router' : 'chat', key, model, (mdl) => gemini.transcribe({ key, model: mdl, data })) };
+  }
+  const orKey = store.getOpenRouterKey();
+  if (!orKey) throw Object.assign(new Error(t('Для голосового ввода нужен ключ Google AI Studio или OpenRouter')), { code: 'no_key' });
+  const cfg = orSettings(settings);
+  const oc = catalog.get().openrouter || {};
+  const model = [cfg.router, cfg.chat, oc.router, oc.chat, ...(oc.list || [])].find(m => /^google\/gemini/.test(m || '') && !/image|banana/.test(m)) || 'google/gemini-2.5-flash';
+  return { text: await openrouter.transcribe({ key: orKey, model, data }) };
+});
 ipcMain.handle('task:cancel', (_e, taskId) => { tasks.get(taskId)?.abort(); return true; });
 ipcMain.handle('task:run', (_e, input) => {
   const taskId = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
